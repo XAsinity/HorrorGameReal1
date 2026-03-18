@@ -41,6 +41,7 @@ public class FirstPersonController : MonoBehaviour
     private Vector3 _velocity;
     private float _xRotation;
     private float _bobTimer;
+    private float _previousBobOffset;
     private float _footstepTimer;
     private float _defaultCameraY;
     private float _targetHeight;
@@ -62,8 +63,27 @@ public class FirstPersonController : MonoBehaviour
 
         _targetHeight = standingHeight;
 
+        // Set up the default camera eye height.
+        // If CameraHolder is at local Y=0 (user placed it at Player origin),
+        // auto-calculate eye height and reposition it.
         if (cameraHolder != null)
+        {
             _defaultCameraY = cameraHolder.localPosition.y;
+
+            if (Mathf.Approximately(_defaultCameraY, 0f))
+            {
+                // Eye level = standing height minus a small offset (eyes aren't on top of head)
+                _defaultCameraY = standingHeight - 0.2f;
+                cameraHolder.localPosition = new Vector3(
+                    cameraHolder.localPosition.x,
+                    _defaultCameraY,
+                    cameraHolder.localPosition.z
+                );
+            }
+        }
+
+        // Ensure CharacterController center is correct at start
+        _controller.center = new Vector3(0, standingHeight / 2f, 0);
     }
 
     private void Start()
@@ -144,18 +164,23 @@ public class FirstPersonController : MonoBehaviour
     private void HandleCrouch()
     {
         float currentHeight = _controller.height;
-        float newHeight = Mathf.Lerp(currentHeight, _targetHeight, crouchTransitionSpeed * Time.deltaTime);
 
-        _controller.height = newHeight;
-        // Adjust center so we shrink from the top, not from the center
-        _controller.center = new Vector3(0, newHeight / 2f, 0);
-
-        if (cameraHolder != null)
+        // Only adjust height if we're actually transitioning
+        if (Mathf.Abs(currentHeight - _targetHeight) > 0.01f)
         {
-            float cameraY = _defaultCameraY * (newHeight / standingHeight);
-            Vector3 camPos = cameraHolder.localPosition;
-            camPos.y = cameraY;
-            cameraHolder.localPosition = camPos;
+            float newHeight = Mathf.Lerp(currentHeight, _targetHeight, crouchTransitionSpeed * Time.deltaTime);
+
+            _controller.height = newHeight;
+            _controller.center = new Vector3(0, newHeight / 2f, 0);
+
+            // Scale camera position proportionally to height change
+            if (cameraHolder != null)
+            {
+                float cameraY = _defaultCameraY * (newHeight / standingHeight);
+                Vector3 camPos = cameraHolder.localPosition;
+                camPos.y = cameraY;
+                cameraHolder.localPosition = camPos;
+            }
         }
     }
 
@@ -175,12 +200,22 @@ public class FirstPersonController : MonoBehaviour
             float bobOffset = Mathf.Sin(_bobTimer) * bobAmplitude * multiplier;
 
             Vector3 camPos = cameraHolder.localPosition;
-            float baseCameraY = _defaultCameraY * (_controller.height / standingHeight);
-            camPos.y = baseCameraY + bobOffset;
+            // Remove previous frame's bob, apply new bob offset
+            camPos.y -= _previousBobOffset;
+            camPos.y += bobOffset;
+            _previousBobOffset = bobOffset;
             cameraHolder.localPosition = camPos;
         }
         else
         {
+            // Remove residual bob offset when stopping
+            if (_previousBobOffset != 0f)
+            {
+                Vector3 camPos = cameraHolder.localPosition;
+                camPos.y -= _previousBobOffset;
+                _previousBobOffset = 0f;
+                cameraHolder.localPosition = camPos;
+            }
             _bobTimer = 0f;
         }
     }
