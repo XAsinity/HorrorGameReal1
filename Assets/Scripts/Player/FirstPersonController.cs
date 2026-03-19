@@ -11,6 +11,11 @@ public class FirstPersonController : MonoBehaviour
     [SerializeField] private float gravity = -15.0f;
     [SerializeField] private float jumpHeight = 1.0f;
 
+    [Header("Movement Inertia")]
+    [SerializeField] private float accelerationTime = 0.15f;   // Time to reach full speed
+    [SerializeField] private float decelerationTime = 0.2f;    // Time to stop from full speed
+    [SerializeField] private float directionChangeTime = 0.18f; // Time to switch directions
+
     [Header("Look")]
     [SerializeField] private float lookSensitivity = 0.15f;
     [SerializeField] private float maxLookAngle = 85f;
@@ -39,6 +44,8 @@ public class FirstPersonController : MonoBehaviour
     private Vector2 _moveInput;
     private Vector2 _lookInput;
     private Vector3 _velocity;
+    private Vector3 _currentMoveVelocity;  // Smoothed horizontal movement
+    private Vector3 _moveDampVelocity;     // Used by SmoothDamp internally
     private float _xRotation;
     private float _bobTimer;
     private float _previousBobOffset;
@@ -58,21 +65,17 @@ public class FirstPersonController : MonoBehaviour
         if (_audioSource == null)
             _audioSource = gameObject.AddComponent<AudioSource>();
 
-        _audioSource.spatialBlend = 0f; // 2D for player's own footsteps
+        _audioSource.spatialBlend = 0f;
         _audioSource.playOnAwake = false;
 
         _targetHeight = standingHeight;
 
-        // Set up the default camera eye height.
-        // If CameraHolder is at local Y=0 (user placed it at Player origin),
-        // auto-calculate eye height and reposition it.
         if (cameraHolder != null)
         {
             _defaultCameraY = cameraHolder.localPosition.y;
 
             if (Mathf.Approximately(_defaultCameraY, 0f))
             {
-                // Eye level = standing height minus a small offset (eyes aren't on top of head)
                 _defaultCameraY = standingHeight - 0.2f;
                 cameraHolder.localPosition = new Vector3(
                     cameraHolder.localPosition.x,
@@ -82,7 +85,6 @@ public class FirstPersonController : MonoBehaviour
             }
         }
 
-        // Ensure CharacterController center is correct at start
         _controller.center = new Vector3(0, standingHeight / 2f, 0);
     }
 
@@ -105,7 +107,6 @@ public class FirstPersonController : MonoBehaviour
 
     public void OnMove(InputValue value) => _moveInput = value.Get<Vector2>();
     public void OnLook(InputValue value) => _lookInput = value.Get<Vector2>();
-    public void OnSprint(InputValue value) => _isSprinting = value.isPressed;
     public void OnJump(InputValue value) => _jumpRequested = true;
 
     public void OnCrouch(InputValue value)
@@ -136,16 +137,37 @@ public class FirstPersonController : MonoBehaviour
 
     private void HandleMovement()
     {
+        // Poll sprint directly every frame
+        _isSprinting = false;
+        if (Keyboard.current != null && Keyboard.current.leftShiftKey.isPressed)
+            _isSprinting = true;
+        else if (Gamepad.current != null && Gamepad.current.leftStickButton.isPressed)
+            _isSprinting = true;
+
         bool grounded = _controller.isGrounded;
 
         if (grounded && _velocity.y < 0f)
-            _velocity.y = -2f; // small downward force to keep grounded
+            _velocity.y = -2f;
 
         float speed = _isCrouching ? crouchSpeed :
                       _isSprinting ? sprintSpeed : walkSpeed;
 
-        Vector3 move = transform.right * _moveInput.x + transform.forward * _moveInput.y;
-        _controller.Move(move * speed * Time.deltaTime);
+        // Calculate the target velocity based on raw input
+        Vector3 targetMoveVelocity = (transform.right * _moveInput.x + transform.forward * _moveInput.y) * speed;
+
+        // Pick the right smoothing time based on what the player is doing
+        float smoothTime = GetSmoothTime(targetMoveVelocity);
+
+        // Smoothly blend toward the target velocity (this creates the inertia)
+        _currentMoveVelocity = Vector3.SmoothDamp(
+            _currentMoveVelocity,
+            targetMoveVelocity,
+            ref _moveDampVelocity,
+            smoothTime
+        );
+
+        // Apply smoothed horizontal movement
+        _controller.Move(_currentMoveVelocity * Time.deltaTime);
 
         // Jump
         if (_jumpRequested && grounded && !_isCrouching)
@@ -154,9 +176,39 @@ public class FirstPersonController : MonoBehaviour
         }
         _jumpRequested = false;
 
-        // Gravity
+        // Gravity (vertical — not smoothed, gravity should feel instant)
         _velocity.y += gravity * Time.deltaTime;
-        _controller.Move(_velocity * Time.deltaTime);
+        _controller.Move(new Vector3(0f, _velocity.y, 0f) * Time.deltaTime);
+    }
+
+    /// <summary>
+    /// Returns the appropriate smooth time based on whether the player is
+    /// accelerating, decelerating, or changing direction.
+    /// </summary>
+    private float GetSmoothTime(Vector3 targetVelocity)
+    {
+        bool hasInput = targetVelocity.sqrMagnitude > 0.01f;
+        bool isMoving = _currentMoveVelocity.sqrMagnitude > 0.01f;
+
+        if (!hasInput)
+        {
+            // Player released all keys — decelerate to stop
+            return decelerationTime;
+        }
+
+        if (isMoving)
+        {
+            // Check if we're changing direction (dot product < 0 means opposite-ish)
+            float dot = Vector3.Dot(_currentMoveVelocity.normalized, targetVelocity.normalized);
+            if (dot < 0.3f)
+            {
+                // Significant direction change — use direction change time
+                return directionChangeTime;
+            }
+        }
+
+        // Accelerating or maintaining speed
+        return accelerationTime;
     }
 
     // ─── CROUCH ───────────────────────────────────────────────────
@@ -165,7 +217,6 @@ public class FirstPersonController : MonoBehaviour
     {
         float currentHeight = _controller.height;
 
-        // Only adjust height if we're actually transitioning
         if (Mathf.Abs(currentHeight - _targetHeight) > 0.01f)
         {
             float newHeight = Mathf.Lerp(currentHeight, _targetHeight, crouchTransitionSpeed * Time.deltaTime);
@@ -173,7 +224,6 @@ public class FirstPersonController : MonoBehaviour
             _controller.height = newHeight;
             _controller.center = new Vector3(0, newHeight / 2f, 0);
 
-            // Scale camera position proportionally to height change
             if (cameraHolder != null)
             {
                 float cameraY = _defaultCameraY * (newHeight / standingHeight);
@@ -190,7 +240,9 @@ public class FirstPersonController : MonoBehaviour
     {
         if (cameraHolder == null) return;
 
-        bool isMoving = _moveInput.sqrMagnitude > 0.1f && _controller.isGrounded;
+        // Use actual smoothed velocity to drive head bob, not raw input
+        // This means bob ramps up and down with the inertia — feels connected
+        bool isMoving = _currentMoveVelocity.sqrMagnitude > 0.2f && _controller.isGrounded;
 
         if (isMoving)
         {
@@ -200,7 +252,6 @@ public class FirstPersonController : MonoBehaviour
             float bobOffset = Mathf.Sin(_bobTimer) * bobAmplitude * multiplier;
 
             Vector3 camPos = cameraHolder.localPosition;
-            // Remove previous frame's bob, apply new bob offset
             camPos.y -= _previousBobOffset;
             camPos.y += bobOffset;
             _previousBobOffset = bobOffset;
@@ -208,7 +259,6 @@ public class FirstPersonController : MonoBehaviour
         }
         else
         {
-            // Remove residual bob offset when stopping
             if (_previousBobOffset != 0f)
             {
                 Vector3 camPos = cameraHolder.localPosition;
@@ -225,7 +275,10 @@ public class FirstPersonController : MonoBehaviour
     private void HandleFootsteps()
     {
         if (footstepClips == null || footstepClips.Length == 0) return;
-        if (!_controller.isGrounded || _moveInput.sqrMagnitude < 0.1f) return;
+
+        // Use smoothed velocity for footsteps too — no footstep sounds during the
+        // brief deceleration slide when you're barely moving
+        if (!_controller.isGrounded || _currentMoveVelocity.sqrMagnitude < 0.5f) return;
 
         float interval = _isCrouching ? footstepInterval * 1.5f :
                          _isSprinting ? footstepInterval * 0.65f : footstepInterval;
