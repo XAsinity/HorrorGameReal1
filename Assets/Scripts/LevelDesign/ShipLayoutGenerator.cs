@@ -1076,12 +1076,29 @@ public class ShipLayoutGenerator : MonoBehaviour
             // Left solid segment
             float lw = half + bX[0] - hOp;
             if (lw > 0.01f) MakeBoxOnParent(transform, "EngFW3_L",  new Vector3(-half + lw / 2f,              engH / 2f, wz), lw,  engH, wallThickness);
-            // Gap between door 0 and door 1
+            // Gap between door 0 and door 1 — lateral vent shaft passes through here,
+            // so split into below-vent and above-vent sections (no wall in the vent band).
             float mw1 = bX[1] - hOp - (bX[0] + hOp);
-            if (mw1 > 0.01f) MakeBoxOnParent(transform, "EngFW3_M1", new Vector3(bX[0] + hOp + mw1 / 2f,    engH / 2f, wz), mw1, engH, wallThickness);
-            // Gap between door 1 and door 2
+            if (mw1 > 0.01f)
+            {
+                float mx1  = bX[0] + hOp + mw1 / 2f;
+                float vTop = vY + ventH;
+                if (vY > 0.01f)
+                    MakeBoxOnParent(transform, "EngFW3_M1_Bot", new Vector3(mx1, vY / 2f, wz), mw1, vY, wallThickness);
+                if (engH - vTop > 0.01f)
+                    MakeBoxOnParent(transform, "EngFW3_M1_Top", new Vector3(mx1, vTop + (engH - vTop) / 2f, wz), mw1, engH - vTop, wallThickness);
+            }
+            // Gap between door 1 and door 2 — same vent-band split treatment.
             float mw2 = bX[2] - hOp - (bX[1] + hOp);
-            if (mw2 > 0.01f) MakeBoxOnParent(transform, "EngFW3_M2", new Vector3(bX[1] + hOp + mw2 / 2f,    engH / 2f, wz), mw2, engH, wallThickness);
+            if (mw2 > 0.01f)
+            {
+                float mx2  = bX[1] + hOp + mw2 / 2f;
+                float vTop = vY + ventH;
+                if (vY > 0.01f)
+                    MakeBoxOnParent(transform, "EngFW3_M2_Bot", new Vector3(mx2, vY / 2f, wz), mw2, vY, wallThickness);
+                if (engH - vTop > 0.01f)
+                    MakeBoxOnParent(transform, "EngFW3_M2_Top", new Vector3(mx2, vTop + (engH - vTop) / 2f, wz), mw2, engH - vTop, wallThickness);
+            }
             // Right solid segment
             float rw = half - (bX[2] + hOp);
             if (rw > 0.01f) MakeBoxOnParent(transform, "EngFW3_R",  new Vector3(half - rw / 2f,              engH / 2f, wz), rw,  engH, wallThickness);
@@ -1196,13 +1213,17 @@ public class ShipLayoutGenerator : MonoBehaviour
         //  BUILD — VENT NETWORK
         // ══════════════════════════════════════════════════════════
 
-        // --- Dock: dead-end cap + elbow + drop ---
+        // --- Dock: dead-end cap + elbow ---
+        // The Docking Bay is always taller than roomHeight, so the trunk vent runs
+        // at vY = 3.2 m inside the room — well below the dock ceiling.  A VDrop +
+        // CutCeilingForVent pair would create a ceiling hole at dockH (~5–6 m) with
+        // no vent shaft connecting back down to the trunk, leaving a visible gap.
+        // The VElbow's open bottom already provides a visible vent-access opening from
+        // inside the dock room, so no additional drop piece is needed here.
         float dockCapZ = dockZ - dockD / 2f + 1f;
         ConnectVent("VS_DockCap", 0f, vY, dockCapZ, 0f, vY, dockZ - hvW);
         AddVentCap("VentCap_Dock", 0f, vY, dockCapZ);
         AddVentElbow("VElbow_Dock", 0f, vY, dockZ, false, false, true, true);
-        AddVentVertical("VDrop_Dock", 0f, dropY, dockZ, dropW, dropH, dropW);
-        CutCeilingForVent(dockGen, dropW, dropW);
 
         // --- Main spine vent (dock → engineering front) ---
         // sv tracks the leading edge of the next shaft to emit
