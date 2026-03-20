@@ -208,6 +208,7 @@ public class ShipLayoutGenerator : MonoBehaviour
         AddVentTee("VJ_EngFront", 0, vY, engFront, false, true, false, false);
 
         ConnectVent("VS_DockToCorA", 0, vY, dockZ - dockD / 2f + 1f, 0, vY, dockZ - hvW);
+        MakeBoxOnParent(transform, "VentCap_Dock", new Vector3(0, vY, dockZ - dockD / 2f + 1f), ventW, ventH, wallThickness);
         AddVentElbow("VElbow_Dock", 0, vY, dockZ, false, false, true, true);
         ConnectVent("VS_DockToCorA_2", 0, vY, dockZ + hvW, 0, vY, corAZ - hvW);
         ConnectVent("VS_CorAToCargo", 0, vY, corAZ + hvW, 0, vY, cargoFront);
@@ -255,6 +256,7 @@ public class ShipLayoutGenerator : MonoBehaviour
         ConnectVent("VL_ToMess_A", corCfinX, vY, corCfinZ + hvW, messX, vY, messZ - hvW);
         AddVentElbow("VElbow_Mess", messX, vY, messZ, false, false, true, true);
         ConnectVent("VL_ToMess_B", messX, vY, messZ + hvW, messX, vY, messBackEdge + messD - 1f);
+        MakeBoxOnParent(transform, "VentCap_Mess", new Vector3(messX, vY, messBackEdge + messD - 1f), ventW, ventH, wallThickness);
         ConnectVent("VB_Crew", corCfinX - hvW, vY, corCfinZ, crewX + hvW, vY, corCfinZ);
         AddVentElbow("VElbow_Crew", crewX, vY, corCfinZ, true, true, true, false);
         AddVentVertical("VDrop_Crew", crewX, dropY, corCfinZ, dropW, dropH, dropW);
@@ -277,6 +279,7 @@ public class ShipLayoutGenerator : MonoBehaviour
         ConnectVent("VR_ToBridge_A", corDfinX, vY, corDfinZ + hvW, bridgeX, vY, bridgeZ - hvW);
         AddVentElbow("VElbow_Bridge", bridgeX, vY, bridgeZ, false, false, true, true);
         ConnectVent("VR_ToBridge_B", bridgeX, vY, bridgeZ + hvW, bridgeX, vY, bridgeBackEdge + bridgeD - 1f);
+        MakeBoxOnParent(transform, "VentCap_Bridge", new Vector3(bridgeX, vY, bridgeBackEdge + bridgeD - 1f), ventW, ventH, wallThickness);
         ConnectVent("VB_Med", corDfinX + hvW, vY, corDfinZ, medX - hvW, vY, corDfinZ);
         AddVentElbow("VElbow_Med", medX, vY, corDfinZ, true, true, false, true);
         AddVentVertical("VDrop_Med", medX, dropY, corDfinZ, dropW, dropH, dropW);
