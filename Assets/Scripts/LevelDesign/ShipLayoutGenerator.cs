@@ -1020,12 +1020,108 @@ public class ShipLayoutGenerator : MonoBehaviour
         }
 
         // ══════════════════════════════════════════════════════════
-        //  BUILD — ROOMS
+        //  PASS 1 — PLANNING (overlap checks only, no geometry)
         // ══════════════════════════════════════════════════════════
 
-        // Tracks placed room XZ footprints as (centerX, centerZ, halfWidth, halfDepth).
-        // Used to prevent optional rooms from overlapping already-placed geometry.
+        // Tracks placed room XZ footprints: (centerX, centerZ, halfWidth, halfDepth).
+        // Required rooms are registered immediately; optional rooms are checked and
+        // either registered (placed) or their flag is cleared (skipped).
         var roomBounds = new System.Collections.Generic.List<Vector4>();
+
+        // Required rooms — always placed; seed their bounds now so optional rooms
+        // are checked against them before any geometry is built.
+        roomBounds.Add(new Vector4(0f, dockZ,   dockW  / 2f, dockD  / 2f));
+        roomBounds.Add(new Vector4(0f, cargoCZ, cargoW / 2f, cargoD / 2f));
+        roomBounds.Add(new Vector4(0f, engCZ,   engW   / 2f, engD   / 2f));
+
+        // Spine side rooms
+        for (int i = 0; i < spineCount; i++)
+        {
+            if (sHL[i])
+            {
+                if (!BoundsOverlap(roomBounds, sLX[i], sCZ[i], sLW[i] / 2f, sLD[i] / 2f, 0.5f))
+                    roomBounds.Add(new Vector4(sLX[i], sCZ[i], sLW[i] / 2f, sLD[i] / 2f));
+                else
+                {
+                    sHL[i] = false;
+                    Debug.LogWarning("[ProcGen] Skipped " + sLNm[i] + "_L" + i + " — overlaps existing room");
+                }
+            }
+            if (sHR[i])
+            {
+                if (!BoundsOverlap(roomBounds, sRX[i], sCZ[i], sRW[i] / 2f, sRD[i] / 2f, 0.5f))
+                    roomBounds.Add(new Vector4(sRX[i], sCZ[i], sRW[i] / 2f, sRD[i] / 2f));
+                else
+                {
+                    sHR[i] = false;
+                    Debug.LogWarning("[ProcGen] Skipped " + sRNm[i] + "_R" + i + " — overlaps existing room");
+                }
+            }
+        }
+
+        // Engineering optional side rooms
+        if (engHR)
+        {
+            if (!BoundsOverlap(roomBounds, reactX, engCZ, reactW_ / 2f, reactD_ / 2f, 0.5f))
+                roomBounds.Add(new Vector4(reactX, engCZ, reactW_ / 2f, reactD_ / 2f));
+            else
+            {
+                engHR = false;
+                Debug.LogWarning("[ProcGen] Skipped " + reactNm + "_EngR — overlaps existing room");
+            }
+        }
+        if (engHL)
+        {
+            if (!BoundsOverlap(roomBounds, labX, engCZ, labW_ / 2f, labD_ / 2f, 0.5f))
+                roomBounds.Add(new Vector4(labX, engCZ, labW_ / 2f, labD_ / 2f));
+            else
+            {
+                engHL = false;
+                Debug.LogWarning("[ProcGen] Skipped " + labNm + "_EngL — overlaps existing room");
+            }
+        }
+
+        // Branch final-corridor side rooms and terminal rooms
+        bool[] bTermExists = new bool[branchCount];
+        for (int b = 0; b < branchCount; b++)
+        {
+            if (bPat[b] == 1)
+            {
+                if (bHL[b])
+                {
+                    if (!BoundsOverlap(roomBounds, bLX[b], bFinCZ[b], bLW[b] / 2f, bLD[b] / 2f, 0.5f))
+                        roomBounds.Add(new Vector4(bLX[b], bFinCZ[b], bLW[b] / 2f, bLD[b] / 2f));
+                    else
+                    {
+                        bHL[b] = false;
+                        Debug.LogWarning("[ProcGen] Skipped " + bLNm[b] + "_BL" + b + " — overlaps existing room");
+                    }
+                }
+                if (bHR[b])
+                {
+                    if (!BoundsOverlap(roomBounds, bRX[b], bFinCZ[b], bRW[b] / 2f, bRD[b] / 2f, 0.5f))
+                        roomBounds.Add(new Vector4(bRX[b], bFinCZ[b], bRW[b] / 2f, bRD[b] / 2f));
+                    else
+                    {
+                        bHR[b] = false;
+                        Debug.LogWarning("[ProcGen] Skipped " + bRNm[b] + "_BR" + b + " — overlaps existing room");
+                    }
+                }
+            }
+            if (!BoundsOverlap(roomBounds, bTermX[b], bTermCZ[b], bTermW[b] / 2f, bTermD[b] / 2f, 0.5f))
+            {
+                bTermExists[b] = true;
+                roomBounds.Add(new Vector4(bTermX[b], bTermCZ[b], bTermW[b] / 2f, bTermD[b] / 2f));
+            }
+            else
+            {
+                Debug.LogWarning("[ProcGen] Skipped terminal " + bTermNm[b] + " (branch " + b + ") — overlaps existing room");
+            }
+        }
+
+        // ══════════════════════════════════════════════════════════
+        //  PASS 2 — BUILD — ROOMS
+        // ══════════════════════════════════════════════════════════
 
         // --- Docking Bay ---
         var dockGen = AddRoom("DockingBay", 0f, dockZ, dockW, dockH, dockD);
@@ -1033,7 +1129,6 @@ public class ShipLayoutGenerator : MonoBehaviour
         CutVentInDoorWallTop(
             AddDoorWall("Door_Dock_Front", 0f, dockFr - wallThickness / 2f, dockW, dockH).transform,
             dockH, dH, vY);
-        roomBounds.Add(new Vector4(0f, dockZ, dockW / 2f, dockD / 2f));
 
         // --- Spine corridors + optional side rooms ---
         var sCorGen = new ShipModuleGenerator[spineCount];
@@ -1043,42 +1138,21 @@ public class ShipLayoutGenerator : MonoBehaviour
         for (int i = 0; i < spineCount; i++)
         {
             sCorGen[i] = AddCorridor("SpineCor_" + i, 0f, sCZ[i], corridorWidth, corridorHeight, sLen[i]);
-            // Corridor bounds are intentionally NOT registered — side rooms attach
-            // directly to corridors and would always fail the overlap test otherwise.
-
             if (sHL[i])
             {
-                if (!BoundsOverlap(roomBounds, sLX[i], sCZ[i], sLW[i] / 2f, sLD[i] / 2f, 0.05f))
-                {
-                    sLGen[i] = AddRoom(sLNm[i] + "_L" + i, sLX[i], sCZ[i], sLW[i], roomHeight, sLD[i]);
-                    DeleteChildWall(sLGen[i], "Wall_Right");
-                    DeleteChildWall(sCorGen[i], "Wall_Left");
-                    CutWallForDoor(sCorGen[i], "Wall_Left", true, corridorWidth, corridorHeight, sLen[i], 0f, dW, dH);
-                    AddDoorWallSide("Door_" + sLNm[i] + "_" + i, -HalfCor, sCZ[i], sLW[i], roomHeight);
-                    roomBounds.Add(new Vector4(sLX[i], sCZ[i], sLW[i] / 2f, sLD[i] / 2f));
-                }
-                else
-                {
-                    sHL[i] = false;
-                    Debug.LogWarning("[ProcGen] Skipped " + sLNm[i] + "_L" + i + " — overlaps existing room");
-                }
+                sLGen[i] = AddRoom(sLNm[i] + "_L" + i, sLX[i], sCZ[i], sLW[i], roomHeight, sLD[i]);
+                DeleteChildWall(sLGen[i], "Wall_Right");
+                DeleteChildWall(sCorGen[i], "Wall_Left");
+                CutWallForDoor(sCorGen[i], "Wall_Left", true, corridorWidth, corridorHeight, sLen[i], 0f, dW, dH);
+                AddDoorWallSide("Door_" + sLNm[i] + "_" + i, -HalfCor, sCZ[i], sLW[i], roomHeight);
             }
             if (sHR[i])
             {
-                if (!BoundsOverlap(roomBounds, sRX[i], sCZ[i], sRW[i] / 2f, sRD[i] / 2f, 0.05f))
-                {
-                    sRGen[i] = AddRoom(sRNm[i] + "_R" + i, sRX[i], sCZ[i], sRW[i], roomHeight, sRD[i]);
-                    DeleteChildWall(sRGen[i], "Wall_Left");
-                    DeleteChildWall(sCorGen[i], "Wall_Right");
-                    CutWallForDoor(sCorGen[i], "Wall_Right", false, corridorWidth, corridorHeight, sLen[i], 0f, dW, dH);
-                    AddDoorWallSide("Door_" + sRNm[i] + "_" + i, HalfCor, sCZ[i], sRW[i], roomHeight);
-                    roomBounds.Add(new Vector4(sRX[i], sCZ[i], sRW[i] / 2f, sRD[i] / 2f));
-                }
-                else
-                {
-                    sHR[i] = false;
-                    Debug.LogWarning("[ProcGen] Skipped " + sRNm[i] + "_R" + i + " — overlaps existing room");
-                }
+                sRGen[i] = AddRoom(sRNm[i] + "_R" + i, sRX[i], sCZ[i], sRW[i], roomHeight, sRD[i]);
+                DeleteChildWall(sRGen[i], "Wall_Left");
+                DeleteChildWall(sCorGen[i], "Wall_Right");
+                CutWallForDoor(sCorGen[i], "Wall_Right", false, corridorWidth, corridorHeight, sLen[i], 0f, dW, dH);
+                AddDoorWallSide("Door_" + sRNm[i] + "_" + i, HalfCor, sCZ[i], sRW[i], roomHeight);
             }
         }
 
@@ -1092,7 +1166,6 @@ public class ShipLayoutGenerator : MonoBehaviour
         CutVentInDoorWallTop(
             AddDoorWall("Door_Cargo_Front", 0f, cargoFrZ - wallThickness / 2f, cargoW, cargoH).transform,
             cargoH, dH, vY);
-        roomBounds.Add(new Vector4(0f, cargoCZ, cargoW / 2f, cargoD / 2f));
 
         // --- Engineering Hub ---
         var engGen = AddRoom("EngineeringHub", 0f, engCZ, engW, engH, engD);
@@ -1101,7 +1174,6 @@ public class ShipLayoutGenerator : MonoBehaviour
             AddDoorWall("Door_Eng_Back", 0f, engBk + wallThickness / 2f, engW, engH).transform,
             engH, dH, vY);
         DeleteChildWall(engGen, "Wall_Front");
-        roomBounds.Add(new Vector4(0f, engCZ, engW / 2f, engD / 2f));
 
         // Engineering front wall — varies by branch count
         if (branchCount == 1)
@@ -1173,39 +1245,21 @@ public class ShipLayoutGenerator : MonoBehaviour
         ShipModuleGenerator engReactGen = null, engLabGen = null;
         if (engHR)
         {
-            if (!BoundsOverlap(roomBounds, reactX, engCZ, reactW_ / 2f, reactD_ / 2f, 0.05f))
-            {
-                DeleteChildWall(engGen, "Wall_Right");
-                CutVentInDoorWallTop(
-                    AddDoorWallSide("Door_Eng_R", engW / 2f - wallThickness / 2f, engCZ, engD, engH).transform,
-                    engH, dH, vY);
-                engReactGen = AddRoom(reactNm + "_EngR", reactX, engCZ, reactW_, roomHeight, reactD_);
-                DeleteChildWall(engReactGen, "Wall_Left");
-                roomBounds.Add(new Vector4(reactX, engCZ, reactW_ / 2f, reactD_ / 2f));
-            }
-            else
-            {
-                engHR = false;
-                Debug.LogWarning("[ProcGen] Skipped " + reactNm + "_EngR — overlaps existing room");
-            }
+            DeleteChildWall(engGen, "Wall_Right");
+            CutVentInDoorWallTop(
+                AddDoorWallSide("Door_Eng_R", engW / 2f - wallThickness / 2f, engCZ, engD, engH).transform,
+                engH, dH, vY);
+            engReactGen = AddRoom(reactNm + "_EngR", reactX, engCZ, reactW_, roomHeight, reactD_);
+            DeleteChildWall(engReactGen, "Wall_Left");
         }
         if (engHL)
         {
-            if (!BoundsOverlap(roomBounds, labX, engCZ, labW_ / 2f, labD_ / 2f, 0.05f))
-            {
-                DeleteChildWall(engGen, "Wall_Left");
-                CutVentInDoorWallTop(
-                    AddDoorWallSide("Door_Eng_L", -(engW / 2f) + wallThickness / 2f, engCZ, engD, engH).transform,
-                    engH, dH, vY);
-                engLabGen = AddRoom(labNm + "_EngL", labX, engCZ, labW_, roomHeight, labD_);
-                DeleteChildWall(engLabGen, "Wall_Right");
-                roomBounds.Add(new Vector4(labX, engCZ, labW_ / 2f, labD_ / 2f));
-            }
-            else
-            {
-                engHL = false;
-                Debug.LogWarning("[ProcGen] Skipped " + labNm + "_EngL — overlaps existing room");
-            }
+            DeleteChildWall(engGen, "Wall_Left");
+            CutVentInDoorWallTop(
+                AddDoorWallSide("Door_Eng_L", -(engW / 2f) + wallThickness / 2f, engCZ, engD, engH).transform,
+                engH, dH, vY);
+            engLabGen = AddRoom(labNm + "_EngL", labX, engCZ, labW_, roomHeight, labD_);
+            DeleteChildWall(engLabGen, "Wall_Right");
         }
 
         // --- Fork branches ---
@@ -1223,19 +1277,13 @@ public class ShipLayoutGenerator : MonoBehaviour
                 // ── Short branch: straight corridor → terminal room ──
                 float strZ = engFr + bStrLen[b] / 2f;
                 AddCorridor(bs + "Str", bX[b], strZ, corridorWidth, corridorHeight, bStrLen[b]);
-                // Corridor bounds intentionally not registered — rooms attach to corridors.
 
-                // Terminal room — check for overlap before placing
-                if (!BoundsOverlap(roomBounds, bTermX[b], bTermCZ[b], bTermW[b] / 2f, bTermD[b] / 2f, 0.05f))
+                // Terminal room — only if it passed the overlap check in Pass 1
+                if (bTermExists[b])
                 {
                     termGen[b] = AddRoom(bTermNm[b], bTermX[b], bTermCZ[b], bTermW[b], roomHeight, bTermD[b]);
                     DeleteChildWall(termGen[b], "Wall_Back");
                     AddDoorWall("Door_" + bTermNm[b] + "_Bk", bTermX[b], bTermBk[b] + wallThickness / 2f, bTermW[b], roomHeight);
-                    roomBounds.Add(new Vector4(bTermX[b], bTermCZ[b], bTermW[b] / 2f, bTermD[b] / 2f));
-                }
-                else
-                {
-                    Debug.LogWarning("[ProcGen] Skipped terminal " + bTermNm[b] + " (branch " + b + ") — overlaps existing room");
                 }
             }
             else
@@ -1243,7 +1291,6 @@ public class ShipLayoutGenerator : MonoBehaviour
                 // ── Z-shaped branch: straight → corner1 → side corridor → corner2 → final corridor → terminal ──
                 float strZ   = engFr + bStrLen[b] / 2f;
                 AddCorridor(bs + "Str", bX[b], strZ, corridorWidth, corridorHeight, bStrLen[b]);
-                // Corridor bounds intentionally not registered — rooms attach to corridors.
 
                 // Corner 1 — turns from +Z into ±X
                 bool goLeft = bSideDir[b] == -1;
@@ -1278,53 +1325,30 @@ public class ShipLayoutGenerator : MonoBehaviour
                 // Final corridor
                 bFinCorGen[b] = AddCorridor(bs + "Fin", bCor2X[b], bFinCZ[b], corridorWidth, corridorHeight, bFinLen[b]);
 
-                // Final-corridor side rooms — check for overlap before placing
+                // Final-corridor side rooms (only those that passed overlap check in Pass 1)
                 if (bHL[b])
                 {
-                    if (!BoundsOverlap(roomBounds, bLX[b], bFinCZ[b], bLW[b] / 2f, bLD[b] / 2f, 0.05f))
-                    {
-                        bLGen[b] = AddRoom(bLNm[b] + "_BL" + b, bLX[b], bFinCZ[b], bLW[b], roomHeight, bLD[b]);
-                        DeleteChildWall(bLGen[b], "Wall_Right");
-                        DeleteChildWall(bFinCorGen[b], "Wall_Left");
-                        CutWallForDoor(bFinCorGen[b], "Wall_Left", true, corridorWidth, corridorHeight, bFinLen[b], 0f, dW, dH);
-                        AddDoorWallSide("Door_" + bLNm[b] + "_BL" + b, bCor2X[b] - HalfCor, bFinCZ[b], bLW[b], roomHeight);
-                        roomBounds.Add(new Vector4(bLX[b], bFinCZ[b], bLW[b] / 2f, bLD[b] / 2f));
-                    }
-                    else
-                    {
-                        bHL[b] = false;
-                        Debug.LogWarning("[ProcGen] Skipped " + bLNm[b] + "_BL" + b + " — overlaps existing room");
-                    }
+                    bLGen[b] = AddRoom(bLNm[b] + "_BL" + b, bLX[b], bFinCZ[b], bLW[b], roomHeight, bLD[b]);
+                    DeleteChildWall(bLGen[b], "Wall_Right");
+                    DeleteChildWall(bFinCorGen[b], "Wall_Left");
+                    CutWallForDoor(bFinCorGen[b], "Wall_Left", true, corridorWidth, corridorHeight, bFinLen[b], 0f, dW, dH);
+                    AddDoorWallSide("Door_" + bLNm[b] + "_BL" + b, bCor2X[b] - HalfCor, bFinCZ[b], bLW[b], roomHeight);
                 }
                 if (bHR[b])
                 {
-                    if (!BoundsOverlap(roomBounds, bRX[b], bFinCZ[b], bRW[b] / 2f, bRD[b] / 2f, 0.05f))
-                    {
-                        bRGen[b] = AddRoom(bRNm[b] + "_BR" + b, bRX[b], bFinCZ[b], bRW[b], roomHeight, bRD[b]);
-                        DeleteChildWall(bRGen[b], "Wall_Left");
-                        DeleteChildWall(bFinCorGen[b], "Wall_Right");
-                        CutWallForDoor(bFinCorGen[b], "Wall_Right", false, corridorWidth, corridorHeight, bFinLen[b], 0f, dW, dH);
-                        AddDoorWallSide("Door_" + bRNm[b] + "_BR" + b, bCor2X[b] + HalfCor, bFinCZ[b], bRW[b], roomHeight);
-                        roomBounds.Add(new Vector4(bRX[b], bFinCZ[b], bRW[b] / 2f, bRD[b] / 2f));
-                    }
-                    else
-                    {
-                        bHR[b] = false;
-                        Debug.LogWarning("[ProcGen] Skipped " + bRNm[b] + "_BR" + b + " — overlaps existing room");
-                    }
+                    bRGen[b] = AddRoom(bRNm[b] + "_BR" + b, bRX[b], bFinCZ[b], bRW[b], roomHeight, bRD[b]);
+                    DeleteChildWall(bRGen[b], "Wall_Left");
+                    DeleteChildWall(bFinCorGen[b], "Wall_Right");
+                    CutWallForDoor(bFinCorGen[b], "Wall_Right", false, corridorWidth, corridorHeight, bFinLen[b], 0f, dW, dH);
+                    AddDoorWallSide("Door_" + bRNm[b] + "_BR" + b, bCor2X[b] + HalfCor, bFinCZ[b], bRW[b], roomHeight);
                 }
 
-                // Terminal room — check for overlap before placing
-                if (!BoundsOverlap(roomBounds, bTermX[b], bTermCZ[b], bTermW[b] / 2f, bTermD[b] / 2f, 0.05f))
+                // Terminal room — only if it passed the overlap check in Pass 1
+                if (bTermExists[b])
                 {
                     termGen[b] = AddRoom(bTermNm[b], bTermX[b], bTermCZ[b], bTermW[b], roomHeight, bTermD[b]);
                     DeleteChildWall(termGen[b], "Wall_Back");
                     AddDoorWall("Door_" + bTermNm[b] + "_Bk", bTermX[b], bTermBk[b] + wallThickness / 2f, bTermW[b], roomHeight);
-                    roomBounds.Add(new Vector4(bTermX[b], bTermCZ[b], bTermW[b] / 2f, bTermD[b] / 2f));
-                }
-                else
-                {
-                    Debug.LogWarning("[ProcGen] Skipped terminal " + bTermNm[b] + " (branch " + b + ") — overlaps existing room");
                 }
             }
         }
@@ -1360,14 +1384,14 @@ public class ShipLayoutGenerator : MonoBehaviour
                 else                       AddVentTee("VJ_S" + i, 0f, vY, sCZ[i], false, false, true, false);
                 sv = sCZ[i] + hvW;
 
-                if (sHL[i] && sLGen[i] != null)
+                if (sHL[i])
                 {
                     ConnectVent("VB_SL" + i, -hvW, vY, sCZ[i], sLX[i] + hvW, vY, sCZ[i]);
                     AddVentElbow("VElbow_SL" + i, sLX[i], vY, sCZ[i], true, true, true, false);
                     AddVentVertical("VDrop_SL" + i, sLX[i], dropY, sCZ[i], dropW, dropH, dropW);
                     CutCeilingForVent(sLGen[i], dropW, dropW);
                 }
-                if (sHR[i] && sRGen[i] != null)
+                if (sHR[i])
                 {
                     ConnectVent("VB_SR" + i, hvW, vY, sCZ[i], sRX[i] - hvW, vY, sCZ[i]);
                     AddVentElbow("VElbow_SR" + i, sRX[i], vY, sCZ[i], true, true, false, true);
@@ -1394,14 +1418,14 @@ public class ShipLayoutGenerator : MonoBehaviour
             else                     AddVentTee("VJ_EngC", 0f, vY, engCZ, false, false, true, false);
             sv = engCZ + hvW;
 
-            if (engHR && engReactGen != null)
+            if (engHR)
             {
                 ConnectVent("VB_React", hvW, vY, engCZ, reactX - hvW, vY, engCZ);
                 AddVentElbow("VElbow_React", reactX, vY, engCZ, true, true, false, true);
                 AddVentVertical("VDrop_React", reactX, dropY, engCZ, dropW, dropH, dropW);
                 CutCeilingForVent(engReactGen, dropW, dropW);
             }
-            if (engHL && engLabGen != null)
+            if (engHL)
             {
                 ConnectVent("VB_Lab", -hvW, vY, engCZ, labX + hvW, vY, engCZ);
                 AddVentElbow("VElbow_Lab", labX, vY, engCZ, true, true, true, false);
@@ -1470,16 +1494,27 @@ public class ShipLayoutGenerator : MonoBehaviour
         {
             float bvStart = engFr + hvW; // branch vent start Z (just past start junction)
             float termDeep = bTermBk[b] + bTermD[b] - 1f; // deep dead-end inside terminal room
+            // Shaft end: reach terminal room if it was placed, else stop at corridor end.
+            float termVentEndZ = bTermExists[b] ? bTermCZ[b] - hvW : bTermBk[b] - hvW;
 
             if (bPat[b] == 0)
             {
-                // Short branch: straight shaft → terminal elbow → run → cap
-                ConnectVent("VB" + b + "_Str", bTermX[b], vY, bvStart, bTermX[b], vY, bTermCZ[b] - hvW);
-                AddVentElbow("VElbow_Term" + b, bTermX[b], vY, bTermCZ[b], false, false, true, true);
-                ConnectVent("VB" + b + "_Run", bTermX[b], vY, bTermCZ[b] + hvW, bTermX[b], vY, termDeep);
-                AddVentCap("VentCap_Term" + b, bTermX[b], vY, termDeep);
-                AddVentVertical("VDrop_Term" + b, bTermX[b], dropY, bTermCZ[b], dropW, dropH, dropW);
-                if (termGen[b] != null) CutCeilingForVent(termGen[b], dropW, dropW);
+                // Short branch: straight shaft to corridor end or terminal room
+                // If terminal room was placed: shaft to room, elbow in, run + cap inside room, drop.
+                // If terminal room was skipped: shaft only to corridor end, cap there.
+                ConnectVent("VB" + b + "_Str", bTermX[b], vY, bvStart, bTermX[b], vY, termVentEndZ);
+                if (bTermExists[b])
+                {
+                    AddVentElbow("VElbow_Term" + b, bTermX[b], vY, bTermCZ[b], false, false, true, true);
+                    ConnectVent("VB" + b + "_Run", bTermX[b], vY, bTermCZ[b] + hvW, bTermX[b], vY, termDeep);
+                    AddVentCap("VentCap_Term" + b, bTermX[b], vY, termDeep);
+                    AddVentVertical("VDrop_Term" + b, bTermX[b], dropY, bTermCZ[b], dropW, dropH, dropW);
+                    CutCeilingForVent(termGen[b], dropW, dropW);
+                }
+                else
+                {
+                    AddVentCap("VentCap_Term" + b, bTermX[b], vY, termVentEndZ);
+                }
             }
             else
             {
@@ -1519,33 +1554,40 @@ public class ShipLayoutGenerator : MonoBehaviour
                     else if (bHL[b])            AddVentTee("VJ_BFin" + b, bCor2X[b], vY, bFinCZ[b], false, false, false, true);
                     else                        AddVentTee("VJ_BFin" + b, bCor2X[b], vY, bFinCZ[b], false, false, true, false);
 
-                    if (bHL[b] && bLGen[b] != null)
+                    if (bHL[b])
                     {
                         ConnectVent("VBL" + b, bCor2X[b] - hvW, vY, bFinCZ[b], bLX[b] + hvW, vY, bFinCZ[b]);
                         AddVentElbow("VElbow_BL" + b, bLX[b], vY, bFinCZ[b], true, true, true, false);
                         AddVentVertical("VDrop_BL" + b, bLX[b], dropY, bFinCZ[b], dropW, dropH, dropW);
                         CutCeilingForVent(bLGen[b], dropW, dropW);
                     }
-                    if (bHR[b] && bRGen[b] != null)
+                    if (bHR[b])
                     {
                         ConnectVent("VBR" + b, bCor2X[b] + hvW, vY, bFinCZ[b], bRX[b] - hvW, vY, bFinCZ[b]);
                         AddVentElbow("VElbow_BR" + b, bRX[b], vY, bFinCZ[b], true, true, false, true);
                         AddVentVertical("VDrop_BR" + b, bRX[b], dropY, bFinCZ[b], dropW, dropH, dropW);
                         CutCeilingForVent(bRGen[b], dropW, dropW);
                     }
-                    ConnectVent("VB" + b + "_Fin2", bCor2X[b], vY, bFinCZ[b] + hvW, bCor2X[b], vY, bTermCZ[b] - hvW);
+                    ConnectVent("VB" + b + "_Fin2", bCor2X[b], vY, bFinCZ[b] + hvW, bCor2X[b], vY, termVentEndZ);
                 }
                 else
                 {
-                    ConnectVent("VB" + b + "_Fin1", bCor2X[b], vY, finSv, bCor2X[b], vY, bTermCZ[b] - hvW);
+                    ConnectVent("VB" + b + "_Fin1", bCor2X[b], vY, finSv, bCor2X[b], vY, termVentEndZ);
                 }
 
-                // 5. Terminal room vent
-                AddVentElbow("VElbow_Term" + b, bCor2X[b], vY, bTermCZ[b], false, false, true, true);
-                ConnectVent("VB" + b + "_Run", bCor2X[b], vY, bTermCZ[b] + hvW, bCor2X[b], vY, termDeep);
-                AddVentCap("VentCap_Term" + b, bCor2X[b], vY, termDeep);
-                AddVentVertical("VDrop_Term" + b, bCor2X[b], dropY, bTermCZ[b], dropW, dropH, dropW);
-                if (termGen[b] != null) CutCeilingForVent(termGen[b], dropW, dropW);
+                // 5. Terminal room vent — only if the room was placed
+                if (bTermExists[b])
+                {
+                    AddVentElbow("VElbow_Term" + b, bCor2X[b], vY, bTermCZ[b], false, false, true, true);
+                    ConnectVent("VB" + b + "_Run", bCor2X[b], vY, bTermCZ[b] + hvW, bCor2X[b], vY, termDeep);
+                    AddVentCap("VentCap_Term" + b, bCor2X[b], vY, termDeep);
+                    AddVentVertical("VDrop_Term" + b, bCor2X[b], dropY, bTermCZ[b], dropW, dropH, dropW);
+                    CutCeilingForVent(termGen[b], dropW, dropW);
+                }
+                else
+                {
+                    AddVentCap("VentCap_Term" + b, bCor2X[b], vY, termVentEndZ);
+                }
             }
         }
 
@@ -1565,11 +1607,11 @@ public class ShipLayoutGenerator : MonoBehaviour
         // Spine side rooms
         for (int i = 0; i < spineCount; i++)
         {
-            if (sHL[i] && sLGen[i] != null)
+            if (sHL[i])
                 AddProp("SL" + i + "_Crate", sLX[i] + RngRange(rng, -sLW[i] / 2f + 0.8f, sLW[i] / 2f - 0.8f), 0f,
                     sCZ[i] + RngRange(rng, -sLD[i] / 2f + 0.8f, sLD[i] / 2f - 0.8f),
                     ShipModuleGenerator.ModuleType.Crate, RngRange(rng, 0.8f, 1.2f), RngRange(rng, 0.6f, 1.0f), RngRange(rng, 0.8f, 1.2f));
-            if (sHR[i] && sRGen[i] != null)
+            if (sHR[i])
                 AddProp("SR" + i + "_Console", sRX[i], 0f, sCZ[i],
                     ShipModuleGenerator.ModuleType.Console, RngRange(rng, 1.0f, 1.4f), RngRange(rng, 0.8f, 1.0f), 0.4f);
         }
@@ -1587,12 +1629,12 @@ public class ShipLayoutGenerator : MonoBehaviour
         AddProp("Eng_Pillar2", -epx, 0f, epz,                        ShipModuleGenerator.ModuleType.Pillar, 0.4f, engH, 0.4f);
         AddProp("Eng_Pillar3",  epx, 0f, epz + RngRange(rng, 3f, 5f), ShipModuleGenerator.ModuleType.Pillar, 0.4f, engH, 0.4f);
         AddProp("Eng_Pillar4", -epx, 0f, epz + RngRange(rng, 3f, 5f), ShipModuleGenerator.ModuleType.Pillar, 0.4f, engH, 0.4f);
-        if (engHR && engReactGen != null)
+        if (engHR)
         {
             AddProp("React_Console", reactX, 0f, engCZ, ShipModuleGenerator.ModuleType.Console, RngRange(rng, 1.0f, 1.4f), RngRange(rng, 1.0f, 1.3f), 0.5f);
             AddProp("React_Pillar",  reactX, 0f, engCZ + RngRange(rng, -1.5f, 1.5f), ShipModuleGenerator.ModuleType.Pillar, 0.5f, roomHeight, 0.5f);
         }
-        if (engHL && engLabGen != null)
+        if (engHL)
         {
             AddProp("Lab_Console1", labX + RngRange(rng, -labW_ / 2f + 1f, labW_ / 2f - 1f), 0f, engCZ + RngRange(rng, -1f, 1f), ShipModuleGenerator.ModuleType.Console, RngRange(rng, 1.2f, 1.6f), RngRange(rng, 0.9f, 1.1f), 0.5f);
             AddProp("Lab_Console2", labX + RngRange(rng, -labW_ / 2f + 1f, labW_ / 2f - 1f), 0f, engCZ + RngRange(rng, -1f, 1f), ShipModuleGenerator.ModuleType.Console, RngRange(rng, 1.2f, 1.6f), RngRange(rng, 0.9f, 1.1f), 0.5f);
@@ -1601,7 +1643,7 @@ public class ShipLayoutGenerator : MonoBehaviour
         // Terminal rooms
         for (int b = 0; b < branchCount; b++)
         {
-            if (termGen[b] == null) continue;
+            if (!bTermExists[b]) continue;
             if (bTermNm[b] == "Bridge")
             {
                 AddProp("Bridge_Console_M", bTermX[b], 0f, bTermCZ[b] + RngRange(rng, 0.5f, 2f),
@@ -1626,11 +1668,11 @@ public class ShipLayoutGenerator : MonoBehaviour
             // Branch final-corridor side room props (Z-shaped)
             if (bPat[b] == 1)
             {
-                if (bHL[b] && bLGen[b] != null)
+                if (bHL[b])
                     AddProp("BL" + b + "_Crate", bLX[b] + RngRange(rng, -bLW[b] / 2f + 0.8f, bLW[b] / 2f - 0.8f), 0f,
                         bFinCZ[b] + RngRange(rng, -bLD[b] / 2f + 0.8f, bLD[b] / 2f - 0.8f),
                         ShipModuleGenerator.ModuleType.Crate, RngRange(rng, 0.8f, 1.2f), RngRange(rng, 0.6f, 1.0f), RngRange(rng, 0.8f, 1.2f));
-                if (bHR[b] && bRGen[b] != null)
+                if (bHR[b])
                     AddProp("BR" + b + "_Console", bRX[b], 0f, bFinCZ[b],
                         ShipModuleGenerator.ModuleType.Console, RngRange(rng, 1.0f, 1.4f), RngRange(rng, 0.8f, 1.0f), 0.4f);
             }
