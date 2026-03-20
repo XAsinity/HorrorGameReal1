@@ -753,10 +753,11 @@ public class ShipLayoutGenerator : MonoBehaviour
     //  Each entry in 'placed' is (centerX, centerZ, halfWidth, halfDepth).
     // ═══════════════════════════════════════════════════════════════
     private static bool BoundsOverlap(System.Collections.Generic.List<Vector4> placed,
-        float cx, float cz, float halfW, float halfD, float pad)
+        float cx, float cz, float halfW, float halfD, float pad, int excludeIdx = -1)
     {
         for (int i = 0; i < placed.Count; i++)
         {
+            if (i == excludeIdx) continue;
             var p = placed[i];
             if (Mathf.Abs(cx - p.x) < halfW + p.z + pad &&
                 Mathf.Abs(cz - p.y) < halfD + p.w + pad)
@@ -794,9 +795,9 @@ public class ShipLayoutGenerator : MonoBehaviour
     //  Returns true on success.
     // ─────────────────────────────────────────────────────────────
     private bool ProcTryRegister(System.Collections.Generic.List<Vector4> bds,
-        float cx, float cz, float hw, float hd, float pad)
+        float cx, float cz, float hw, float hd, float pad, int excludeIdx = -1)
     {
-        if (BoundsOverlap(bds, cx, cz, hw, hd, pad)) return false;
+        if (BoundsOverlap(bds, cx, cz, hw, hd, pad, excludeIdx)) return false;
         bds.Add(new Vector4(cx, cz, hw, hd));
         return true;
     }
@@ -817,7 +818,8 @@ public class ShipLayoutGenerator : MonoBehaviour
     private bool ProcTryPlaceRoom(
         System.Collections.Generic.List<Vector4> bds,
         float corZ, float baseW, float baseD, bool preferLeft, float pad,
-        out float finalCX, out float finalW, out float finalD, out bool isLeft)
+        out float finalCX, out float finalW, out float finalD, out bool isLeft,
+        int excludeIdx = -1)
     {
         float[] mults = { 1.0f, 0.8f, 0.65f };
         for (int mi = 0; mi < mults.Length; mi++)
@@ -829,7 +831,7 @@ public class ShipLayoutGenerator : MonoBehaviour
                 float rW = Mathf.Max(3f, baseW * mults[mi]);
                 float rD = Mathf.Max(3f, baseD * mults[mi]);
                 float cx = side * (HalfCor + rD / 2f);
-                if (ProcTryRegister(bds, cx, corZ, rW / 2f, rD / 2f, pad))
+                if (ProcTryRegister(bds, cx, corZ, rW / 2f, rD / 2f, pad, excludeIdx))
                 {
                     finalCX = cx; finalW = rW; finalD = rD;
                     isLeft  = (side == -1);
@@ -911,12 +913,25 @@ public class ShipLayoutGenerator : MonoBehaviour
                 float sideW = hOp - hvWLocal;
                 if (sideW > 0.01f)
                 {
-                    MakeBoxOnParent(transform, "EngFWD_DTS_L_" + i,
-                        new Vector3(bx - hOp - sideW / 2f, doorH + topH / 2f, wallZ),
-                        sideW, topH, wallThickness);
-                    MakeBoxOnParent(transform, "EngFWD_DTS_R_" + i,
-                        new Vector3(bx + hOp + sideW / 2f, doorH + topH / 2f, wallZ),
-                        sideW, topH, wallThickness);
+                    // Split at the vent band so the lateral vent shaft can pass through
+                    if (belowH > 0.01f)
+                    {
+                        MakeBoxOnParent(transform, "EngFWD_DTS_LBot_" + i,
+                            new Vector3(bx - hOp - sideW / 2f, doorH + belowH / 2f, wallZ),
+                            sideW, belowH, wallThickness);
+                        MakeBoxOnParent(transform, "EngFWD_DTS_RBot_" + i,
+                            new Vector3(bx + hOp + sideW / 2f, doorH + belowH / 2f, wallZ),
+                            sideW, belowH, wallThickness);
+                    }
+                    if (aboveH > 0.01f)
+                    {
+                        MakeBoxOnParent(transform, "EngFWD_DTS_LTop_" + i,
+                            new Vector3(bx - hOp - sideW / 2f, vTop + aboveH / 2f, wallZ),
+                            sideW, aboveH, wallThickness);
+                        MakeBoxOnParent(transform, "EngFWD_DTS_RTop_" + i,
+                            new Vector3(bx + hOp + sideW / 2f, vTop + aboveH / 2f, wallZ),
+                            sideW, aboveH, wallThickness);
+                    }
                 }
                 if (belowH > 0.01f)
                     MakeBoxOnParent(transform, "EngFWD_DT_Bot_" + i,
@@ -964,7 +979,12 @@ public class ShipLayoutGenerator : MonoBehaviour
         System.Random rng = new System.Random(actualSeed);
         Debug.Log("[ProcGen] Starting intelligent layout generation. Seed=" + actualSeed);
 
-        const float kPad  = 0.5f;    // AABB overlap safety margin
+        // AABB overlap safety margin.  0.05 is intentionally small: side rooms are
+        // designed to abut (slightly overlap) their parent corridor wall for proper
+        // connection, so the parent corridor is excluded via excludeIdx rather than
+        // relying on a large pad to separate them.  0.05 prevents rooms that would
+        // otherwise share a wall face from being falsely rejected.
+        const float kPad  = 0.05f;
         float dW    = kDoorWidth;
         float dH    = kDoorHeight;
         float vY    = roomHeight;
@@ -1113,12 +1133,20 @@ public class ShipLayoutGenerator : MonoBehaviour
         bds.Add(new Vector4(0f, cargoCZ, cargoW / 2f, cargoD / 2f));
         bds.Add(new Vector4(0f, engCZ,   engW   / 2f, engD   / 2f));
 
-        // Register corridor footprints so rooms cannot encroach on them
+        // Register corridor footprints so rooms cannot encroach on them.
+        // Spine corridor i is at bds index (3 + i).
         for (int i = 0; i < spineCount; i++)
             bds.Add(new Vector4(0f, sCZ[i], corridorWidth / 2f, sLen[i] / 2f));
+
+        // For branch final corridors (Z-shaped branches) we need their bds index so
+        // that side rooms can exclude their own parent corridor from the overlap test.
+        // bStrCorBdsIdx is used for terminal rooms on straight branches.
+        int[] bFinCorBdsIdx = new int[branchCount];
+        int[] bStrCorBdsIdx = new int[branchCount];
         for (int b = 0; b < branchCount; b++)
         {
             float strCZ = engFr + bStrLen[b] / 2f;
+            bStrCorBdsIdx[b] = bds.Count;
             bds.Add(new Vector4(bX[b], strCZ, corridorWidth / 2f, bStrLen[b] / 2f));
             if (bPat[b] == 1)
             {
@@ -1126,6 +1154,7 @@ public class ShipLayoutGenerator : MonoBehaviour
                 float sCXb = gl ? bX[b] - HalfCor - bSideLen[b] / 2f
                                 : bX[b] + HalfCor + bSideLen[b] / 2f;
                 bds.Add(new Vector4(sCXb, bCor1Z[b], bSideLen[b] / 2f, corridorWidth / 2f));
+                bFinCorBdsIdx[b] = bds.Count;
                 bds.Add(new Vector4(bCor2X[b], bFinCZ[b], corridorWidth / 2f, bFinLen[b] / 2f));
             }
         }
@@ -1139,13 +1168,18 @@ public class ShipLayoutGenerator : MonoBehaviour
 
         for (int i = 0; i < spineCount; i++)
         {
+            // Spine corridor i was registered at bds index (3 + i).
+            // Pass it as excludeIdx so the overlap test ignores the parent corridor
+            // (side rooms are designed to touch/overlap their corridor wall).
+            int spineCorBdsIdx = 3 + i;
+
             // First side candidate — prefer left
             if (pp < poolSize && rng.NextDouble() > 0.25)
             {
                 int k = pidx[pp];
                 float fcx, fw, fd; bool fLeft;
                 if (ProcTryPlaceRoom(bds, sCZ[i], pRW[k], pRD[k], true, kPad,
-                        out fcx, out fw, out fd, out fLeft))
+                        out fcx, out fw, out fd, out fLeft, spineCorBdsIdx))
                 {
                     pp++;
                     if (fLeft)
@@ -1178,7 +1212,7 @@ public class ShipLayoutGenerator : MonoBehaviour
                     float rW2 = Mathf.Max(3f, pRW[k] * mults2[mi2]);
                     float rD2 = Mathf.Max(3f, pRD[k] * mults2[mi2]);
                     float cx2 = side2 * (HalfCor + rD2 / 2f);
-                    if (ProcTryRegister(bds, cx2, sCZ[i], rW2 / 2f, rD2 / 2f, kPad))
+                    if (ProcTryRegister(bds, cx2, sCZ[i], rW2 / 2f, rD2 / 2f, kPad, spineCorBdsIdx))
                     {
                         pp++;
                         if (needLeft)
@@ -1207,7 +1241,7 @@ public class ShipLayoutGenerator : MonoBehaviour
         {
             int k = pidx[pp]; pp++;
             float cx = engW / 2f + pRD[k] / 2f;
-            if (ProcTryRegister(bds, cx, engCZ, pRW[k] / 2f, pRD[k] / 2f, kPad))
+            if (ProcTryRegister(bds, cx, engCZ, pRW[k] / 2f, pRD[k] / 2f, kPad, 2))
             {
                 engHR = true; reactNm = pName[k];
                 reactW_ = pRW[k]; reactD_ = pRD[k]; reactX = cx;
@@ -1224,7 +1258,7 @@ public class ShipLayoutGenerator : MonoBehaviour
         {
             int k = pidx[pp]; pp++;
             float cx = -(engW / 2f + pRD[k] / 2f);
-            if (ProcTryRegister(bds, cx, engCZ, pRW[k] / 2f, pRD[k] / 2f, kPad))
+            if (ProcTryRegister(bds, cx, engCZ, pRW[k] / 2f, pRD[k] / 2f, kPad, 2))
             {
                 engHL = true; labNm = pName[k];
                 labW_ = pRW[k]; labD_ = pRD[k]; labX = cx;
@@ -1258,7 +1292,12 @@ public class ShipLayoutGenerator : MonoBehaviour
             { bTermW[b] = 7f; bTermD[b] = 5f; bTermNm[b] = "Terminal_" + b; }
             bTermCZ[b] = bTermBk[b] + bTermD[b] / 2f;
 
-            if (ProcTryRegister(bds, bTermX[b], bTermCZ[b], bTermW[b] / 2f, bTermD[b] / 2f, kPad))
+            // Terminal rooms sit at the far end of their parent corridor and are designed
+            // to abut it (touching/overlapping the corridor wall face).  Exclude the
+            // parent corridor from the overlap check: straight branch → bStrCorBdsIdx,
+            // Z-shaped branch → bFinCorBdsIdx (the final leg corridor).
+            int termParentCorBdsIdx = (bPat[b] == 1) ? bFinCorBdsIdx[b] : bStrCorBdsIdx[b];
+            if (ProcTryRegister(bds, bTermX[b], bTermCZ[b], bTermW[b] / 2f, bTermD[b] / 2f, kPad, termParentCorBdsIdx))
             { bTermExists[b] = true; roomsPlaced++; }
             else
             {
@@ -1282,7 +1321,7 @@ public class ShipLayoutGenerator : MonoBehaviour
             {
                 int k = pidx[pp]; pp++;
                 float cx = bCor2X[b] - HalfCor - pRD[k] / 2f;
-                if (ProcTryRegister(bds, cx, bFinCZ[b], pRW[k] / 2f, pRD[k] / 2f, kPad))
+                if (ProcTryRegister(bds, cx, bFinCZ[b], pRW[k] / 2f, pRD[k] / 2f, kPad, bFinCorBdsIdx[b]))
                 { bHL[b] = true; bLNm[b] = pName[k]; bLW[b] = pRW[k]; bLD[b] = pRD[k]; bLX[b] = cx; roomsPlaced++; }
                 else
                 { Debug.LogWarning("[ProcGen] " + pName[k] + "_BL" + b + " overlaps — skipping."); roomsSkipped++; }
@@ -1291,7 +1330,7 @@ public class ShipLayoutGenerator : MonoBehaviour
             {
                 int k = pidx[pp]; pp++;
                 float cx = bCor2X[b] + HalfCor + pRD[k] / 2f;
-                if (ProcTryRegister(bds, cx, bFinCZ[b], pRW[k] / 2f, pRD[k] / 2f, kPad))
+                if (ProcTryRegister(bds, cx, bFinCZ[b], pRW[k] / 2f, pRD[k] / 2f, kPad, bFinCorBdsIdx[b]))
                 { bHR[b] = true; bRNm[b] = pName[k]; bRW[b] = pRW[k]; bRD[b] = pRD[k]; bRX[b] = cx; roomsPlaced++; }
                 else
                 { Debug.LogWarning("[ProcGen] " + pName[k] + "_BR" + b + " overlaps — skipping."); roomsSkipped++; }
