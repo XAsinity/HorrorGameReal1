@@ -1285,6 +1285,13 @@ public class ShipLayoutGenerator : MonoBehaviour
                     DeleteChildWall(termGen[b], "Wall_Back");
                     AddDoorWall("Door_" + bTermNm[b] + "_Bk", bTermX[b], bTermBk[b] + wallThickness / 2f, bTermW[b], roomHeight);
                 }
+                else
+                {
+                    // Terminal room was skipped — cap the corridor's open front end with a solid wall
+                    MakeBoxOnParent(transform, bs + "TermCap",
+                        new Vector3(bTermX[b], corridorHeight / 2f, bTermBk[b] - wallThickness / 2f),
+                        corridorWidth, corridorHeight, wallThickness);
+                }
             }
             else
             {
@@ -1349,6 +1356,13 @@ public class ShipLayoutGenerator : MonoBehaviour
                     termGen[b] = AddRoom(bTermNm[b], bTermX[b], bTermCZ[b], bTermW[b], roomHeight, bTermD[b]);
                     DeleteChildWall(termGen[b], "Wall_Back");
                     AddDoorWall("Door_" + bTermNm[b] + "_Bk", bTermX[b], bTermBk[b] + wallThickness / 2f, bTermW[b], roomHeight);
+                }
+                else
+                {
+                    // Terminal room was skipped — cap the final corridor's open front end with a solid wall
+                    MakeBoxOnParent(transform, bs + "TermCap",
+                        new Vector3(bTermX[b], corridorHeight / 2f, bTermBk[b] - wallThickness / 2f),
+                        corridorWidth, corridorHeight, wallThickness);
                 }
             }
         }
