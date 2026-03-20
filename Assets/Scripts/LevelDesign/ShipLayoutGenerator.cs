@@ -16,6 +16,10 @@ public class ShipLayoutGenerator : MonoBehaviour
     [Header("Material")]
     public Material prototypeMaterial;
 
+    [Header("Procedural Generation")]
+    public bool proceduralLayout = false;
+    public int seed = -1; // -1 = random
+
     private float HalfCor { get { return corridorWidth / 2f; } }
     private float ventW = 0.9f;
     private float ventH = 0.7f;
@@ -29,6 +33,12 @@ public class ShipLayoutGenerator : MonoBehaviour
         {
             if (Application.isPlaying) Destroy(transform.GetChild(i).gameObject);
             else DestroyImmediate(transform.GetChild(i).gameObject);
+        }
+
+        if (proceduralLayout)
+        {
+            GenerateProceduralLayout();
+            return;
         }
 
         float doorWidth = kDoorWidth;
@@ -208,7 +218,7 @@ public class ShipLayoutGenerator : MonoBehaviour
         AddVentTee("VJ_EngFront", 0, vY, engFront, false, true, false, false);
 
         ConnectVent("VS_DockToCorA", 0, vY, dockZ - dockD / 2f + 1f, 0, vY, dockZ - hvW);
-        MakeBoxOnParent(transform, "VentCap_Dock", new Vector3(0, vY, dockZ - dockD / 2f + 1f), ventW, ventH, wallThickness);
+        AddVentCap("VentCap_Dock", 0, vY, dockZ - dockD / 2f + 1f);
         AddVentElbow("VElbow_Dock", 0, vY, dockZ, false, false, true, true);
         ConnectVent("VS_DockToCorA_2", 0, vY, dockZ + hvW, 0, vY, corAZ - hvW);
         ConnectVent("VS_CorAToCargo", 0, vY, corAZ + hvW, 0, vY, cargoFront);
@@ -256,7 +266,7 @@ public class ShipLayoutGenerator : MonoBehaviour
         ConnectVent("VL_ToMess_A", corCfinX, vY, corCfinZ + hvW, messX, vY, messZ - hvW);
         AddVentElbow("VElbow_Mess", messX, vY, messZ, false, false, true, true);
         ConnectVent("VL_ToMess_B", messX, vY, messZ + hvW, messX, vY, messBackEdge + messD - 1f);
-        MakeBoxOnParent(transform, "VentCap_Mess", new Vector3(messX, vY, messBackEdge + messD - 1f), ventW, ventH, wallThickness);
+        AddVentCap("VentCap_Mess", messX, vY, messBackEdge + messD - 1f);
         ConnectVent("VB_Crew", corCfinX - hvW, vY, corCfinZ, crewX + hvW, vY, corCfinZ);
         AddVentElbow("VElbow_Crew", crewX, vY, corCfinZ, true, true, true, false);
         AddVentVertical("VDrop_Crew", crewX, dropY, corCfinZ, dropW, dropH, dropW);
@@ -279,7 +289,7 @@ public class ShipLayoutGenerator : MonoBehaviour
         ConnectVent("VR_ToBridge_A", corDfinX, vY, corDfinZ + hvW, bridgeX, vY, bridgeZ - hvW);
         AddVentElbow("VElbow_Bridge", bridgeX, vY, bridgeZ, false, false, true, true);
         ConnectVent("VR_ToBridge_B", bridgeX, vY, bridgeZ + hvW, bridgeX, vY, bridgeBackEdge + bridgeD - 1f);
-        MakeBoxOnParent(transform, "VentCap_Bridge", new Vector3(bridgeX, vY, bridgeBackEdge + bridgeD - 1f), ventW, ventH, wallThickness);
+        AddVentCap("VentCap_Bridge", bridgeX, vY, bridgeBackEdge + bridgeD - 1f);
         ConnectVent("VB_Med", corDfinX + hvW, vY, corDfinZ, medX - hvW, vY, corDfinZ);
         AddVentElbow("VElbow_Med", medX, vY, corDfinZ, true, true, false, true);
         AddVentVertical("VDrop_Med", medX, dropY, corDfinZ, dropW, dropH, dropW);
@@ -502,6 +512,16 @@ public class ShipLayoutGenerator : MonoBehaviour
         gen.overrideMaterial = prototypeMaterial; gen.Generate();
     }
 
+    // ─────────────────────────────────────────────────────────────
+    //  Vent cap — a thin wall that seals a dead-end vent opening.
+    //  vY is the vent bottom; the cap is centred at vY + ventH/2
+    //  to align with the shaft cross-section (which is bottom-anchored).
+    // ─────────────────────────────────────────────────────────────
+    private void AddVentCap(string name, float x, float vY, float z)
+    {
+        MakeBoxOnParent(transform, name, new Vector3(x, vY + ventH / 2f, z), ventW, ventH, wallThickness);
+    }
+
     private void AddVentCross(string name, float x, float y, float z)
     {
         GameObject obj = new GameObject(name);
@@ -717,5 +737,488 @@ public class ShipLayoutGenerator : MonoBehaviour
             MakeBoxOnParent(doorWallParent, "DoorWall_Top_Abv",
                 new Vector3(0, vY + ventH + aboveH / 2f, 0),
                 ventW, aboveH, wallThickness);
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    //  RNG HELPER — maps System.Random [0,1) to [min,max)
+    // ═══════════════════════════════════════════════════════════════
+    private float RngRange(System.Random rng, float min, float max)
+    {
+        return (float)(min + rng.NextDouble() * (max - min));
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    //  PROCEDURAL LAYOUT — called when proceduralLayout == true.
+    //  Uses all the same helper methods as GenerateShipLayout but
+    //  randomises dimensions and which optional side rooms appear.
+    //  Topology is identical to the hardcoded layout (same graph),
+    //  so all corridor/door/vent connections are structurally valid.
+    // ═══════════════════════════════════════════════════════════════
+    private void GenerateProceduralLayout()
+    {
+        int actualSeed = seed < 0 ? System.Environment.TickCount : seed;
+        System.Random rng = new System.Random(actualSeed);
+        Debug.Log("Procedural ship generated with seed: " + actualSeed);
+
+        float dW = kDoorWidth, dH = kDoorHeight;
+        float vY = roomHeight, hvW = ventW / 2f;
+        float dropW = ventW * 0.5f, dropH = ventH + wallThickness + 0.15f, dropY = vY - dropH / 2f;
+
+        // ── Randomised anchor/required room dimensions ──────────────
+        float dockW  = RngRange(rng, 14f, 18f), dockD  = RngRange(rng, 10f, 14f), dockH  = RngRange(rng,  5f,  6f);
+        float cargoW = RngRange(rng,  7f, 10f), cargoD = RngRange(rng,  5f,  8f), cargoH = RngRange(rng,3.5f,  5f);
+        float engW   = RngRange(rng, 10f, 14f), engD   = RngRange(rng,  9f, 12f), engH   = RngRange(rng,  4f,  5f);
+        float messW  = RngRange(rng,  6f,  9f), messD  = RngRange(rng,  4f,  6f);
+        float bridgeW= RngRange(rng,  9f, 12f), bridgeD= RngRange(rng,  7f, 10f);
+
+        // ── Optional side rooms (random inclusion) ──────────────────
+        bool hasStor  = rng.NextDouble() > 0.3;
+        bool hasArm   = rng.NextDouble() > 0.3;
+        bool hasLife  = rng.NextDouble() > 0.3;
+        bool hasReact = rng.NextDouble() > 0.2;
+        bool hasLab   = rng.NextDouble() > 0.2;
+        bool hasCrew  = rng.NextDouble() > 0.3;
+        bool hasSec   = rng.NextDouble() > 0.3;
+        bool hasMed   = rng.NextDouble() > 0.3;
+        bool hasNav   = rng.NextDouble() > 0.3;
+
+        float storW  = RngRange(rng, 5f, 7f), storD  = RngRange(rng, 4f, 6f);
+        float armW   = RngRange(rng, 3f, 5f), armD   = RngRange(rng, 3f, 5f);
+        float lifeW  = RngRange(rng, 4f, 6f), lifeD  = RngRange(rng, 3f, 5f);
+        float reactW = RngRange(rng, 5f, 7f), reactD = RngRange(rng, 5f, 7f);
+        float labW   = RngRange(rng, 5f, 7f), labD   = RngRange(rng, 4f, 6f);
+        float crewW  = RngRange(rng, 5f, 7f), crewD  = RngRange(rng, 4f, 6f);
+        float secW   = RngRange(rng, 3f, 5f), secD   = RngRange(rng, 3f, 5f);
+        float medW   = RngRange(rng, 4f, 6f), medD   = RngRange(rng, 4f, 6f);
+        float navW   = RngRange(rng, 4f, 6f), navD   = RngRange(rng, 3f, 5f);
+
+        // ── Spine Z positions ────────────────────────────────────────
+        float dockZ = 0f, dockFront = dockD / 2f;
+
+        float corALen = RngRange(rng, 6f, 12f);
+        float corABack = dockFront, corAZ = corABack + corALen / 2f, corAFront = corABack + corALen;
+
+        float cargoBack = corAFront, cargoZ = cargoBack + cargoD / 2f, cargoFront = cargoBack + cargoD;
+
+        float corBLen = RngRange(rng, 6f, 12f);
+        float corBBack = cargoFront, corBZ = corBBack + corBLen / 2f, corBFront = corBBack + corBLen;
+
+        float engBack = corBFront, engZ = engBack + engD / 2f, engFront = engBack + engD;
+
+        // Fork C (left / negative X)
+        float corCStrLen = RngRange(rng, 4f, 7f), corCStrX = -(engW / 4f);
+        float corCStrBack = engFront, corCStrZ = corCStrBack + corCStrLen / 2f, corCStrFront = corCStrBack + corCStrLen;
+        float ccL1X = corCStrX, ccL1Z = corCStrFront + HalfCor;
+        float corCsideLen = RngRange(rng, 6f, 10f);
+        float corCsideRightEdge = ccL1X - HalfCor;
+        float corCsideCenterX   = corCsideRightEdge - corCsideLen / 2f;
+        float corCsideLeftEdge  = corCsideRightEdge - corCsideLen;
+        float ccL2X = corCsideLeftEdge - HalfCor, ccL2Z = ccL1Z;
+        float corCfinLen = RngRange(rng, 6f, 10f), corCfinBack = ccL2Z + HalfCor, corCfinX = ccL2X;
+        float corCfinZ = corCfinBack + corCfinLen / 2f, corCfinFront = corCfinBack + corCfinLen;
+        float messX = corCfinX, messBackEdge = corCfinFront, messZ = messBackEdge + messD / 2f;
+
+        // Fork D (right / positive X)
+        float corDStrLen = RngRange(rng, 4f, 7f), corDStrX = engW / 4f;
+        float corDStrBack = engFront, corDStrZ = corDStrBack + corDStrLen / 2f, corDStrFront = corDStrBack + corDStrLen;
+        float ccR1X = corDStrX, ccR1Z = corDStrFront + HalfCor;
+        float corDsideLen = RngRange(rng, 6f, 10f);
+        float corDsideLeftEdge  = ccR1X + HalfCor;
+        float corDsideCenterX   = corDsideLeftEdge + corDsideLen / 2f;
+        float corDsideRightEdge = corDsideLeftEdge + corDsideLen;
+        float ccR2X = corDsideRightEdge + HalfCor, ccR2Z = ccR1Z;
+        float corDfinLen = RngRange(rng, 6f, 10f), corDfinBack = ccR2Z + HalfCor, corDfinX = ccR2X;
+        float corDfinZ = corDfinBack + corDfinLen / 2f, corDfinFront = corDfinBack + corDfinLen;
+        float bridgeX = corDfinX, bridgeBackEdge = corDfinFront, bridgeZ = bridgeBackEdge + bridgeD / 2f;
+
+        // Side-room X positions (same geometry as hardcoded layout)
+        float storX  = -(HalfCor + storD  / 2f);
+        float armX   =   HalfCor + armD   / 2f;
+        float lifeX  = -(HalfCor + lifeD  / 2f);
+        float reactX =   engW    / 2f + reactD / 2f;
+        float labX   = -(engW    / 2f + labD   / 2f);
+        float crewX  = corCfinX - HalfCor - crewD / 2f;
+        float secX   = corCfinX + HalfCor + secD  / 2f;
+        float medX   = corDfinX + HalfCor + medD  / 2f;
+        float navX   = corDfinX - HalfCor - navD  / 2f;
+
+        // ── BUILD ROOMS ──────────────────────────────────────────────
+
+        // Docking Bay
+        ShipModuleGenerator dockGen = AddRoom("DockingBay", 0, dockZ, dockW, dockH, dockD);
+        DeleteChildWall(dockGen, "Wall_Front");
+        CutVentInDoorWallTop(
+            AddDoorWall("Door_Dock_Front", 0, dockFront - wallThickness / 2f, dockW, dockH).transform,
+            dockH, dH, vY);
+
+        // Corridor A + optional side rooms
+        ShipModuleGenerator corAGen = AddCorridor("CorridorA", 0, corAZ, corridorWidth, corridorHeight, corALen);
+        ShipModuleGenerator storGen = null, armGen = null;
+        if (hasStor)
+        {
+            storGen = AddRoom("StorageRoom", storX, corAZ, storW, roomHeight, storD);
+            DeleteChildWall(storGen, "Wall_Right");
+            DeleteChildWall(corAGen, "Wall_Left");
+            CutWallForDoor(corAGen, "Wall_Left", true, corridorWidth, corridorHeight, corALen, 0f, dW, dH);
+            AddDoorWallSide("Door_Storage", -HalfCor, corAZ, storW, roomHeight);
+        }
+        if (hasArm)
+        {
+            armGen = AddRoom("Armory", armX, corAZ, armW, roomHeight, armD);
+            DeleteChildWall(armGen, "Wall_Left");
+            DeleteChildWall(corAGen, "Wall_Right");
+            CutWallForDoor(corAGen, "Wall_Right", false, corridorWidth, corridorHeight, corALen, 0f, dW, dH);
+            AddDoorWallSide("Door_Armory", HalfCor, corAZ, armW, roomHeight);
+        }
+
+        // Cargo Bay
+        ShipModuleGenerator cargoGen = AddRoom("CargoBay", 0, cargoZ, cargoW, cargoH, cargoD);
+        DeleteChildWall(cargoGen, "Wall_Back");
+        CutVentInDoorWallTop(AddDoorWall("Door_Cargo_Back", 0, cargoBack + wallThickness / 2f, cargoW, cargoH).transform, cargoH, dH, vY);
+        DeleteChildWall(cargoGen, "Wall_Front");
+        CutVentInDoorWallTop(AddDoorWall("Door_Cargo_Front", 0, cargoFront - wallThickness / 2f, cargoW, cargoH).transform, cargoH, dH, vY);
+
+        // Corridor B + optional LifeSupport
+        ShipModuleGenerator corBGen = AddCorridor("CorridorB", 0, corBZ, corridorWidth, corridorHeight, corBLen);
+        ShipModuleGenerator lifeGen = null;
+        if (hasLife)
+        {
+            lifeGen = AddRoom("LifeSupport", lifeX, corBZ, lifeW, roomHeight, lifeD);
+            DeleteChildWall(lifeGen, "Wall_Right");
+            DeleteChildWall(corBGen, "Wall_Left");
+            CutWallForDoor(corBGen, "Wall_Left", true, corridorWidth, corridorHeight, corBLen, 0f, dW, dH);
+            AddDoorWallSide("Door_LifeSupport", -HalfCor, corBZ, lifeW, roomHeight);
+        }
+
+        // Engineering Hub
+        ShipModuleGenerator engGen = AddRoom("EngineeringHub", 0, engZ, engW, engH, engD);
+        DeleteChildWall(engGen, "Wall_Back");
+        CutVentInDoorWallTop(AddDoorWall("Door_Eng_Back", 0, engBack + wallThickness / 2f, engW, engH).transform, engH, dH, vY);
+        DeleteChildWall(engGen, "Wall_Front");
+        BuildEngFrontWall(engW, engH, engFront, corCStrX, corDStrX, corridorWidth, dH, dW);
+        ShipModuleGenerator reactGen = null, labGen = null;
+        if (hasReact)
+        {
+            DeleteChildWall(engGen, "Wall_Right");
+            CutVentInDoorWallTop(AddDoorWallSide("Door_Eng_Reactor", engW / 2f - wallThickness / 2f, engZ, engD, engH).transform, engH, dH, vY);
+            reactGen = AddRoom("ReactorRoom", reactX, engZ, reactW, roomHeight, reactD);
+            DeleteChildWall(reactGen, "Wall_Left");
+        }
+        if (hasLab)
+        {
+            DeleteChildWall(engGen, "Wall_Left");
+            CutVentInDoorWallTop(AddDoorWallSide("Door_Eng_Lab", -(engW / 2f) + wallThickness / 2f, engZ, engD, engH).transform, engH, dH, vY);
+            labGen = AddRoom("ScienceLab", labX, engZ, labW, roomHeight, labD);
+            DeleteChildWall(labGen, "Wall_Right");
+        }
+
+        // Fork C corridor branch
+        AddCorridor("CorC_Straight", corCStrX, corCStrZ, corridorWidth, corridorHeight, corCStrLen);
+        AddCorner("CorC_Corner1", ccL1X, ccL1Z, corridorWidth, corridorHeight, corridorWidth, false, true, false, true);
+        {
+            GameObject o = new GameObject("CorC_Side");
+            o.transform.SetParent(transform);
+            o.transform.localPosition = new Vector3(corCsideCenterX, 0, ccL1Z);
+            o.transform.localRotation = Quaternion.Euler(0, 90, 0);
+            ShipModuleGenerator g = o.AddComponent<ShipModuleGenerator>();
+            g.moduleType = ShipModuleGenerator.ModuleType.Corridor;
+            g.width = corridorWidth; g.height = corridorHeight; g.depth = corCsideLen;
+            g.wallThickness = wallThickness; g.detailLevel = detailLevel;
+            g.overrideMaterial = prototypeMaterial; g.Generate();
+        }
+        AddCorner("CorC_Corner2", ccL2X, ccL2Z, corridorWidth, corridorHeight, corridorWidth, true, false, true, false);
+        ShipModuleGenerator corCfinGen = AddCorridor("CorC_Final", corCfinX, corCfinZ, corridorWidth, corridorHeight, corCfinLen);
+        ShipModuleGenerator crewGen = null, secGen = null;
+        if (hasCrew)
+        {
+            crewGen = AddRoom("CrewQuarters", crewX, corCfinZ, crewW, roomHeight, crewD);
+            DeleteChildWall(crewGen, "Wall_Right");
+            DeleteChildWall(corCfinGen, "Wall_Left");
+            CutWallForDoor(corCfinGen, "Wall_Left", true, corridorWidth, corridorHeight, corCfinLen, 0f, dW, dH);
+            AddDoorWallSide("Door_Crew", corCfinX - HalfCor, corCfinZ, crewW, roomHeight);
+        }
+        if (hasSec)
+        {
+            secGen = AddRoom("SecurityOffice", secX, corCfinZ, secW, roomHeight, secD);
+            DeleteChildWall(secGen, "Wall_Left");
+            DeleteChildWall(corCfinGen, "Wall_Right");
+            CutWallForDoor(corCfinGen, "Wall_Right", false, corridorWidth, corridorHeight, corCfinLen, 0f, dW, dH);
+            AddDoorWallSide("Door_Security", corCfinX + HalfCor, corCfinZ, secW, roomHeight);
+        }
+        ShipModuleGenerator messGen = AddRoom("MessHall", messX, messZ, messW, roomHeight, messD);
+        DeleteChildWall(messGen, "Wall_Back");
+        AddDoorWall("Door_Mess_Back", messX, messBackEdge + wallThickness / 2f, messW, roomHeight);
+
+        // Fork D corridor branch
+        AddCorridor("CorD_Straight", corDStrX, corDStrZ, corridorWidth, corridorHeight, corDStrLen);
+        AddCorner("CorD_Corner1", ccR1X, ccR1Z, corridorWidth, corridorHeight, corridorWidth, false, true, true, false);
+        {
+            GameObject o = new GameObject("CorD_Side");
+            o.transform.SetParent(transform);
+            o.transform.localPosition = new Vector3(corDsideCenterX, 0, ccR1Z);
+            o.transform.localRotation = Quaternion.Euler(0, 90, 0);
+            ShipModuleGenerator g = o.AddComponent<ShipModuleGenerator>();
+            g.moduleType = ShipModuleGenerator.ModuleType.Corridor;
+            g.width = corridorWidth; g.height = corridorHeight; g.depth = corDsideLen;
+            g.wallThickness = wallThickness; g.detailLevel = detailLevel;
+            g.overrideMaterial = prototypeMaterial; g.Generate();
+        }
+        AddCorner("CorD_Corner2", ccR2X, ccR2Z, corridorWidth, corridorHeight, corridorWidth, true, false, false, true);
+        ShipModuleGenerator corDfinGen = AddCorridor("CorD_Final", corDfinX, corDfinZ, corridorWidth, corridorHeight, corDfinLen);
+        ShipModuleGenerator medGen = null, navGen = null;
+        if (hasMed)
+        {
+            medGen = AddRoom("MedBay", medX, corDfinZ, medW, roomHeight, medD);
+            DeleteChildWall(medGen, "Wall_Left");
+            DeleteChildWall(corDfinGen, "Wall_Right");
+            CutWallForDoor(corDfinGen, "Wall_Right", false, corridorWidth, corridorHeight, corDfinLen, 0f, dW, dH);
+            AddDoorWallSide("Door_MedBay", corDfinX + HalfCor, corDfinZ, medW, roomHeight);
+        }
+        if (hasNav)
+        {
+            navGen = AddRoom("NavigationRoom", navX, corDfinZ, navW, roomHeight, navD);
+            DeleteChildWall(navGen, "Wall_Right");
+            DeleteChildWall(corDfinGen, "Wall_Left");
+            CutWallForDoor(corDfinGen, "Wall_Left", true, corridorWidth, corridorHeight, corDfinLen, 0f, dW, dH);
+            AddDoorWallSide("Door_Navigation", corDfinX - HalfCor, corDfinZ, navW, roomHeight);
+        }
+        ShipModuleGenerator bridgeGen = AddRoom("Bridge", bridgeX, bridgeZ, bridgeW, roomHeight, bridgeD);
+        DeleteChildWall(bridgeGen, "Wall_Back");
+        AddDoorWall("Door_Bridge_Back", bridgeX, bridgeBackEdge + wallThickness / 2f, bridgeW, roomHeight);
+
+        // ── BUILD VENTS ──────────────────────────────────────────────
+
+        // Dock dead-end cap + elbow + drop
+        ConnectVent("VS_DockToCorA", 0, vY, dockZ - dockD / 2f + 1f, 0, vY, dockZ - hvW);
+        AddVentCap("VentCap_Dock", 0, vY, dockZ - dockD / 2f + 1f);
+        AddVentElbow("VElbow_Dock", 0, vY, dockZ, false, false, true, true);
+        AddVentVertical("VDrop_Dock", 0, dropY, dockZ, dropW, dropH, dropW);
+        CutCeilingForVent(dockGen, dropW, dropW);
+
+        // Main spine — split around junctions, skipping nodes with no branches
+        float spineZ = dockZ + hvW;
+
+        bool needJA = hasStor || hasArm;
+        if (needJA)
+        {
+            ConnectVent("VS_ToCorA", 0, vY, spineZ, 0, vY, corAZ - hvW);
+            if (hasStor && hasArm)      AddVentCross("VJ_CorA", 0, vY, corAZ);
+            else if (hasStor)           AddVentTee("VJ_CorA", 0, vY, corAZ, false, false, false, true);
+            else                        AddVentTee("VJ_CorA", 0, vY, corAZ, false, false, true, false);
+            spineZ = corAZ + hvW;
+        }
+
+        ConnectVent("VS_ToCargo", 0, vY, spineZ, 0, vY, cargoFront);
+        spineZ = cargoFront;
+
+        bool needJB = hasLife;
+        if (needJB)
+        {
+            ConnectVent("VS_ToCorB", 0, vY, spineZ, 0, vY, corBZ - hvW);
+            AddVentTee("VJ_CorB", 0, vY, corBZ, false, false, false, true);
+            spineZ = corBZ + hvW;
+        }
+
+        bool needJEng = hasReact || hasLab;
+        if (needJEng)
+        {
+            ConnectVent("VS_ToEngCenter", 0, vY, spineZ, 0, vY, engZ - hvW);
+            if (hasReact && hasLab)     AddVentCross("VJ_EngCenter", 0, vY, engZ);
+            else if (hasLab)            AddVentTee("VJ_EngCenter", 0, vY, engZ, false, false, false, true);
+            else                        AddVentTee("VJ_EngCenter", 0, vY, engZ, false, false, true, false);
+            spineZ = engZ + hvW;
+        }
+
+        ConnectVent("VS_ToEngFront", 0, vY, spineZ, 0, vY, engFront - hvW);
+        AddVentTee("VJ_EngFront", 0, vY, engFront, false, true, false, false);
+
+        // CorA branch vents
+        if (hasStor && storGen != null)
+        {
+            ConnectVent("VB_Stor", -hvW, vY, corAZ, storX + hvW, vY, corAZ);
+            AddVentElbow("VElbow_Stor", storX, vY, corAZ, true, true, true, false);
+            AddVentVertical("VDrop_Stor", storX, dropY, corAZ, dropW, dropH, dropW);
+            CutCeilingForVent(storGen, dropW, dropW);
+        }
+        if (hasArm && armGen != null)
+        {
+            ConnectVent("VB_Arm", hvW, vY, corAZ, armX - hvW, vY, corAZ);
+            AddVentElbow("VElbow_Arm", armX, vY, corAZ, true, true, false, true);
+            AddVentVertical("VDrop_Arm", armX, dropY, corAZ, dropW, dropH, dropW);
+            CutCeilingForVent(armGen, dropW, dropW);
+        }
+
+        // CorB branch vents
+        if (hasLife && lifeGen != null)
+        {
+            ConnectVent("VB_Life", -hvW, vY, corBZ, lifeX + hvW, vY, corBZ);
+            AddVentElbow("VElbow_Life", lifeX, vY, corBZ, true, true, true, false);
+            AddVentVertical("VDrop_Life", lifeX, dropY, corBZ, dropW, dropH, dropW);
+            CutCeilingForVent(lifeGen, dropW, dropW);
+        }
+
+        // Engineering branch vents
+        if (hasReact && reactGen != null)
+        {
+            ConnectVent("VB_React", hvW, vY, engZ, reactX - hvW, vY, engZ);
+            AddVentElbow("VElbow_React", reactX, vY, engZ, true, true, false, true);
+            AddVentVertical("VDrop_React", reactX, dropY, engZ, dropW, dropH, dropW);
+            CutCeilingForVent(reactGen, dropW, dropW);
+        }
+        if (hasLab && labGen != null)
+        {
+            ConnectVent("VB_Lab", -hvW, vY, engZ, labX + hvW, vY, engZ);
+            AddVentElbow("VElbow_Lab", labX, vY, engZ, true, true, true, false);
+            AddVentVertical("VDrop_Lab", labX, dropY, engZ, dropW, dropH, dropW);
+            CutCeilingForVent(labGen, dropW, dropW);
+        }
+
+        // Fork C vent spine
+        ConnectVent("VL_EngToStr", -hvW, vY, engFront, corCStrX + hvW, vY, engFront);
+        AddVentTee("VJ_CorCStart", corCStrX, vY, corCStrBack, true, false, true, false);
+        ConnectVent("VL_CorCStr", corCStrX, vY, corCStrBack + hvW, corCStrX, vY, ccL1Z - hvW);
+        AddVentCorner("VJ_L1", ccL1X, vY, ccL1Z, false, true, false, true);
+        ConnectVent("VL_Side", ccL1X - hvW, vY, ccL1Z, ccL2X + hvW, vY, ccL2Z);
+        AddVentCorner("VJ_L2", ccL2X, vY, ccL2Z, true, false, true, false);
+        ConnectVent("VL_ToJunc", ccL2X, vY, ccL2Z + hvW, corCfinX, vY, corCfinZ - hvW);
+
+        bool needJCfin = hasCrew || hasSec;
+        if (needJCfin)
+        {
+            if (hasCrew && hasSec)  AddVentCross("VJ_CorCFin", corCfinX, vY, corCfinZ);
+            else if (hasCrew)       AddVentTee("VJ_CorCFin", corCfinX, vY, corCfinZ, false, false, false, true);
+            else                    AddVentTee("VJ_CorCFin", corCfinX, vY, corCfinZ, false, false, true, false);
+        }
+
+        // CorC branch vents → Mess
+        // cfSpineZ: when a junction is present it occupies corCfinZ±hvW so the
+        // next shaft must start at corCfinZ+hvW (front face of junction). With no
+        // junction the previous shaft (VL_ToJunc) already ends at corCfinZ-hvW,
+        // so the continuation shaft starts there with no gap.
+        float cfSpineZ = needJCfin ? corCfinZ + hvW : corCfinZ - hvW;
+        ConnectVent("VL_ToMess_A", corCfinX, vY, cfSpineZ, messX, vY, messZ - hvW);
+        AddVentElbow("VElbow_Mess", messX, vY, messZ, false, false, true, true);
+        ConnectVent("VL_ToMess_B", messX, vY, messZ + hvW, messX, vY, messBackEdge + messD - 1f);
+        AddVentCap("VentCap_Mess", messX, vY, messBackEdge + messD - 1f);
+        AddVentVertical("VDrop_Mess", messX, dropY, messZ, dropW, dropH, dropW);
+        CutCeilingForVent(messGen, dropW, dropW);
+
+        if (hasCrew && crewGen != null)
+        {
+            ConnectVent("VB_Crew", corCfinX - hvW, vY, corCfinZ, crewX + hvW, vY, corCfinZ);
+            AddVentElbow("VElbow_Crew", crewX, vY, corCfinZ, true, true, true, false);
+            AddVentVertical("VDrop_Crew", crewX, dropY, corCfinZ, dropW, dropH, dropW);
+            CutCeilingForVent(crewGen, dropW, dropW);
+        }
+        if (hasSec && secGen != null)
+        {
+            ConnectVent("VB_Sec", corCfinX + hvW, vY, corCfinZ, secX - hvW, vY, corCfinZ);
+            AddVentElbow("VElbow_Sec", secX, vY, corCfinZ, true, true, false, true);
+            AddVentVertical("VDrop_Sec", secX, dropY, corCfinZ, dropW, dropH, dropW);
+            CutCeilingForVent(secGen, dropW, dropW);
+        }
+
+        // Fork D vent spine
+        ConnectVent("VR_EngToStr", hvW, vY, engFront, corDStrX - hvW, vY, engFront);
+        AddVentTee("VJ_CorDStart", corDStrX, vY, corDStrBack, true, false, false, true);
+        ConnectVent("VR_CorDStr", corDStrX, vY, corDStrBack + hvW, corDStrX, vY, ccR1Z - hvW);
+        AddVentCorner("VJ_R1", ccR1X, vY, ccR1Z, false, true, true, false);
+        ConnectVent("VR_Side", ccR1X + hvW, vY, ccR1Z, ccR2X - hvW, vY, ccR2Z);
+        AddVentCorner("VJ_R2", ccR2X, vY, ccR2Z, true, false, false, true);
+        ConnectVent("VR_ToJunc", ccR2X, vY, ccR2Z + hvW, corDfinX, vY, corDfinZ - hvW);
+
+        bool needJDfin = hasMed || hasNav;
+        if (needJDfin)
+        {
+            if (hasMed && hasNav)   AddVentCross("VJ_CorDFin", corDfinX, vY, corDfinZ);
+            else if (hasNav)        AddVentTee("VJ_CorDFin", corDfinX, vY, corDfinZ, false, false, false, true);
+            else                    AddVentTee("VJ_CorDFin", corDfinX, vY, corDfinZ, false, false, true, false);
+        }
+
+        // CorD branch vents → Bridge
+        // dfSpineZ: same pattern as cfSpineZ — starts at front face of junction when
+        // present, or at the end of VR_ToJunc shaft when no junction is placed.
+        float dfSpineZ = needJDfin ? corDfinZ + hvW : corDfinZ - hvW;
+        ConnectVent("VR_ToBridge_A", corDfinX, vY, dfSpineZ, bridgeX, vY, bridgeZ - hvW);
+        AddVentElbow("VElbow_Bridge", bridgeX, vY, bridgeZ, false, false, true, true);
+        ConnectVent("VR_ToBridge_B", bridgeX, vY, bridgeZ + hvW, bridgeX, vY, bridgeBackEdge + bridgeD - 1f);
+        AddVentCap("VentCap_Bridge", bridgeX, vY, bridgeBackEdge + bridgeD - 1f);
+        AddVentVertical("VDrop_Bridge", bridgeX, dropY, bridgeZ, dropW, dropH, dropW);
+        CutCeilingForVent(bridgeGen, dropW, dropW);
+
+        if (hasMed && medGen != null)
+        {
+            ConnectVent("VB_Med", corDfinX + hvW, vY, corDfinZ, medX - hvW, vY, corDfinZ);
+            AddVentElbow("VElbow_Med", medX, vY, corDfinZ, true, true, false, true);
+            AddVentVertical("VDrop_Med", medX, dropY, corDfinZ, dropW, dropH, dropW);
+            CutCeilingForVent(medGen, dropW, dropW);
+        }
+        if (hasNav && navGen != null)
+        {
+            ConnectVent("VB_Nav", corDfinX - hvW, vY, corDfinZ, navX + hvW, vY, corDfinZ);
+            AddVentElbow("VElbow_Nav", navX, vY, corDfinZ, true, true, true, false);
+            AddVentVertical("VDrop_Nav", navX, dropY, corDfinZ, dropW, dropH, dropW);
+            CutCeilingForVent(navGen, dropW, dropW);
+        }
+
+        // ── PROPS ────────────────────────────────────────────────────
+        // Dock
+        AddProp("DockCrate_1", RngRange(rng, -dockW / 2f + 1f, -1f), 0, RngRange(rng, dockZ - dockD / 2f + 1f, dockZ), ShipModuleGenerator.ModuleType.Crate, RngRange(rng, 0.8f, 1.4f), RngRange(rng, 0.6f, 1.1f), RngRange(rng, 0.8f, 1.3f));
+        AddProp("DockCrate_2", RngRange(rng,  1f, dockW / 2f - 1f), 0, RngRange(rng, dockZ - dockD / 2f + 1f, dockZ + dockD / 2f - 1f), ShipModuleGenerator.ModuleType.Crate, RngRange(rng, 0.9f, 1.5f), RngRange(rng, 0.7f, 1.2f), RngRange(rng, 0.9f, 1.4f));
+        // Cargo
+        AddProp("CargoCrate_1", RngRange(rng, -cargoW / 2f + 1f, -0.5f), 0, RngRange(rng, cargoZ - cargoD / 2f + 1f, cargoZ), ShipModuleGenerator.ModuleType.Crate, RngRange(rng, 1.2f, 1.8f), RngRange(rng, 1f, 1.5f), RngRange(rng, 1.2f, 1.6f));
+        AddProp("CargoCrate_2", RngRange(rng,  0.5f, cargoW / 2f - 1f), 0, RngRange(rng, cargoZ, cargoZ + cargoD / 2f - 1f), ShipModuleGenerator.ModuleType.Crate, RngRange(rng, 0.9f, 1.4f), RngRange(rng, 0.7f, 1.1f), RngRange(rng, 0.9f, 1.3f));
+        // Storage
+        if (hasStor && storGen != null)
+        {
+            AddProp("StorCrate_1", storX + RngRange(rng, -storW / 2f + 0.8f, storW / 2f - 0.8f), 0, corAZ + RngRange(rng, -storD / 2f + 0.8f, storD / 2f - 0.8f), ShipModuleGenerator.ModuleType.Crate, RngRange(rng, 0.8f, 1.2f), RngRange(rng, 0.6f, 1f), RngRange(rng, 0.8f, 1.2f));
+            AddProp("StorCrate_2", storX + RngRange(rng, -storW / 2f + 0.8f, storW / 2f - 0.8f), 0, corAZ + RngRange(rng, -storD / 2f + 0.8f, storD / 2f - 0.8f), ShipModuleGenerator.ModuleType.Crate, RngRange(rng, 1f, 1.4f), RngRange(rng, 0.8f, 1.2f), RngRange(rng, 1f, 1.4f));
+        }
+        if (hasArm && armGen != null)
+            AddProp("ArmoryConsole", armX, 0, corAZ, ShipModuleGenerator.ModuleType.Console, RngRange(rng, 0.9f, 1.2f), RngRange(rng, 0.8f, 1f), 0.4f);
+        if (hasLife && lifeGen != null)
+            AddProp("LifeConsole", lifeX, 0, corBZ, ShipModuleGenerator.ModuleType.Console, RngRange(rng, 1f, 1.4f), RngRange(rng, 0.9f, 1.1f), 0.5f);
+        // Engineering
+        AddProp("Console_Eng_L", RngRange(rng, -engW / 2f + 1f, -1f), 0, engZ + RngRange(rng, -2f, 0f), ShipModuleGenerator.ModuleType.Console, RngRange(rng, 1.3f, 1.8f), RngRange(rng, 0.9f, 1.1f), 0.5f);
+        AddProp("Console_Eng_R", RngRange(rng,  1f, engW / 2f - 1f), 0, engZ + RngRange(rng, -2f, 0f), ShipModuleGenerator.ModuleType.Console, RngRange(rng, 1.3f, 1.8f), RngRange(rng, 0.9f, 1.1f), 0.5f);
+        AddProp("Console_Eng_C", 0f, 0, engZ + RngRange(rng, 0f, 2f), ShipModuleGenerator.ModuleType.Console, RngRange(rng, 1.8f, 2.4f), RngRange(rng, 1f, 1.2f), 0.6f);
+        float px1 = RngRange(rng, -engW / 2f + 1.5f, -2f), px2 = -px1;
+        float pz1 = engZ + RngRange(rng, -engD / 2f + 1.5f, 0f);
+        AddProp("Pillar_E1", px1, 0, pz1, ShipModuleGenerator.ModuleType.Pillar, 0.4f, engH, 0.4f);
+        AddProp("Pillar_E2", px2, 0, pz1, ShipModuleGenerator.ModuleType.Pillar, 0.4f, engH, 0.4f);
+        AddProp("Pillar_E3", px1, 0, pz1 + RngRange(rng, 3f, 5f), ShipModuleGenerator.ModuleType.Pillar, 0.4f, engH, 0.4f);
+        AddProp("Pillar_E4", px2, 0, pz1 + RngRange(rng, 3f, 5f), ShipModuleGenerator.ModuleType.Pillar, 0.4f, engH, 0.4f);
+        if (hasReact && reactGen != null)
+        {
+            AddProp("ReactorConsole", reactX, 0, engZ, ShipModuleGenerator.ModuleType.Console, RngRange(rng, 1f, 1.4f), RngRange(rng, 1f, 1.3f), 0.5f);
+            AddProp("ReactorPillar",  reactX, 0, engZ + RngRange(rng, -1.5f, 1.5f), ShipModuleGenerator.ModuleType.Pillar, 0.5f, roomHeight, 0.5f);
+        }
+        if (hasLab && labGen != null)
+        {
+            AddProp("LabConsole_1", labX + RngRange(rng, -labW / 2f + 1f, labW / 2f - 1f), 0, engZ + RngRange(rng, -1f, 1f), ShipModuleGenerator.ModuleType.Console, RngRange(rng, 1.2f, 1.6f), RngRange(rng, 0.9f, 1.1f), 0.5f);
+            AddProp("LabConsole_2", labX + RngRange(rng, -labW / 2f + 1f, labW / 2f - 1f), 0, engZ + RngRange(rng, -1f, 1f), ShipModuleGenerator.ModuleType.Console, RngRange(rng, 1.2f, 1.6f), RngRange(rng, 0.9f, 1.1f), 0.5f);
+        }
+        if (hasCrew && crewGen != null)
+            AddProp("CrewConsole", crewX, 0, corCfinZ, ShipModuleGenerator.ModuleType.Console, RngRange(rng, 0.9f, 1.2f), RngRange(rng, 0.7f, 1f), 0.4f);
+        if (hasSec && secGen != null)
+            AddProp("SecConsole", secX, 0, corCfinZ, ShipModuleGenerator.ModuleType.Console, RngRange(rng, 1f, 1.3f), RngRange(rng, 0.8f, 1f), 0.4f);
+        // Mess
+        AddProp("MessTable_1", messX + RngRange(rng, -messW / 2f + 1f, -0.5f), 0, messZ + RngRange(rng, -messD / 2f + 1f, messD / 2f - 1f), ShipModuleGenerator.ModuleType.Crate, RngRange(rng, 1.5f, 2.5f), 0.75f, RngRange(rng, 0.8f, 1.2f));
+        AddProp("MessTable_2", messX + RngRange(rng,  0.5f, messW / 2f - 1f), 0, messZ + RngRange(rng, -messD / 2f + 1f, messD / 2f - 1f), ShipModuleGenerator.ModuleType.Crate, RngRange(rng, 1.5f, 2.5f), 0.75f, RngRange(rng, 0.8f, 1.2f));
+        if (hasMed && medGen != null)
+        {
+            AddProp("MedConsole", medX, 0, corDfinZ + RngRange(rng, -0.5f, 0.5f), ShipModuleGenerator.ModuleType.Console, RngRange(rng, 1f, 1.4f), RngRange(rng, 0.9f, 1.1f), 0.5f);
+            AddProp("MedBed",     medX, 0, corDfinZ + RngRange(rng,  0.5f, 1.5f), ShipModuleGenerator.ModuleType.Crate,   RngRange(rng, 1.8f, 2.2f), 0.6f, 0.9f);
+        }
+        if (hasNav && navGen != null)
+            AddProp("NavConsole", navX, 0, corDfinZ, ShipModuleGenerator.ModuleType.Console, RngRange(rng, 1.3f, 1.7f), RngRange(rng, 0.9f, 1.1f), 0.5f);
+        // Bridge
+        AddProp("Console_Bridge_Main", bridgeX, 0, bridgeZ + RngRange(rng, 0.5f, 2f), ShipModuleGenerator.ModuleType.Console, RngRange(rng, 2.5f, 3.5f), RngRange(rng, 0.9f, 1.1f), 0.7f);
+        AddProp("Console_Bridge_L", bridgeX - RngRange(rng, 1.5f, 3f), 0, bridgeZ, ShipModuleGenerator.ModuleType.Console, RngRange(rng, 1.2f, 1.8f), RngRange(rng, 0.9f, 1.1f), 0.5f);
+        AddProp("Console_Bridge_R", bridgeX + RngRange(rng, 1.5f, 3f), 0, bridgeZ, ShipModuleGenerator.ModuleType.Console, RngRange(rng, 1.2f, 1.8f), RngRange(rng, 0.9f, 1.1f), 0.5f);
+        AddProp("BridgePillar_L", bridgeX - RngRange(rng, 2.5f, 4f), 0, bridgeZ - 1f, ShipModuleGenerator.ModuleType.Pillar, 0.3f, roomHeight, 0.3f);
+        AddProp("BridgePillar_R", bridgeX + RngRange(rng, 2.5f, 4f), 0, bridgeZ - 1f, ShipModuleGenerator.ModuleType.Pillar, 0.3f, roomHeight, 0.3f);
+
+        Debug.Log("Procedural ship ready. Place player at (0, 1.5, " + (dockZ - dockD / 2f + 1.5f) + ")");
     }
 }
