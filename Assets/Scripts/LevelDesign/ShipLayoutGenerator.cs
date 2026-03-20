@@ -1025,7 +1025,7 @@ public class ShipLayoutGenerator : MonoBehaviour
 
         // Tracks placed room XZ footprints as (centerX, centerZ, halfWidth, halfDepth).
         // Used to prevent optional rooms from overlapping already-placed geometry.
-        var bounds = new System.Collections.Generic.List<Vector4>();
+        var roomBounds = new System.Collections.Generic.List<Vector4>();
 
         // --- Docking Bay ---
         var dockGen = AddRoom("DockingBay", 0f, dockZ, dockW, dockH, dockD);
@@ -1033,7 +1033,7 @@ public class ShipLayoutGenerator : MonoBehaviour
         CutVentInDoorWallTop(
             AddDoorWall("Door_Dock_Front", 0f, dockFr - wallThickness / 2f, dockW, dockH).transform,
             dockH, dH, vY);
-        bounds.Add(new Vector4(0f, dockZ, dockW / 2f, dockD / 2f));
+        roomBounds.Add(new Vector4(0f, dockZ, dockW / 2f, dockD / 2f));
 
         // --- Spine corridors + optional side rooms ---
         var sCorGen = new ShipModuleGenerator[spineCount];
@@ -1043,18 +1043,19 @@ public class ShipLayoutGenerator : MonoBehaviour
         for (int i = 0; i < spineCount; i++)
         {
             sCorGen[i] = AddCorridor("SpineCor_" + i, 0f, sCZ[i], corridorWidth, corridorHeight, sLen[i]);
-            bounds.Add(new Vector4(0f, sCZ[i], corridorWidth / 2f, sLen[i] / 2f));
+            // Corridor bounds are intentionally NOT registered — side rooms attach
+            // directly to corridors and would always fail the overlap test otherwise.
 
             if (sHL[i])
             {
-                if (!BoundsOverlap(bounds, sLX[i], sCZ[i], sLW[i] / 2f, sLD[i] / 2f, 0.3f))
+                if (!BoundsOverlap(roomBounds, sLX[i], sCZ[i], sLW[i] / 2f, sLD[i] / 2f, 0.05f))
                 {
                     sLGen[i] = AddRoom(sLNm[i] + "_L" + i, sLX[i], sCZ[i], sLW[i], roomHeight, sLD[i]);
                     DeleteChildWall(sLGen[i], "Wall_Right");
                     DeleteChildWall(sCorGen[i], "Wall_Left");
                     CutWallForDoor(sCorGen[i], "Wall_Left", true, corridorWidth, corridorHeight, sLen[i], 0f, dW, dH);
                     AddDoorWallSide("Door_" + sLNm[i] + "_" + i, -HalfCor, sCZ[i], sLW[i], roomHeight);
-                    bounds.Add(new Vector4(sLX[i], sCZ[i], sLW[i] / 2f, sLD[i] / 2f));
+                    roomBounds.Add(new Vector4(sLX[i], sCZ[i], sLW[i] / 2f, sLD[i] / 2f));
                 }
                 else
                 {
@@ -1064,14 +1065,14 @@ public class ShipLayoutGenerator : MonoBehaviour
             }
             if (sHR[i])
             {
-                if (!BoundsOverlap(bounds, sRX[i], sCZ[i], sRW[i] / 2f, sRD[i] / 2f, 0.3f))
+                if (!BoundsOverlap(roomBounds, sRX[i], sCZ[i], sRW[i] / 2f, sRD[i] / 2f, 0.05f))
                 {
                     sRGen[i] = AddRoom(sRNm[i] + "_R" + i, sRX[i], sCZ[i], sRW[i], roomHeight, sRD[i]);
                     DeleteChildWall(sRGen[i], "Wall_Left");
                     DeleteChildWall(sCorGen[i], "Wall_Right");
                     CutWallForDoor(sCorGen[i], "Wall_Right", false, corridorWidth, corridorHeight, sLen[i], 0f, dW, dH);
                     AddDoorWallSide("Door_" + sRNm[i] + "_" + i, HalfCor, sCZ[i], sRW[i], roomHeight);
-                    bounds.Add(new Vector4(sRX[i], sCZ[i], sRW[i] / 2f, sRD[i] / 2f));
+                    roomBounds.Add(new Vector4(sRX[i], sCZ[i], sRW[i] / 2f, sRD[i] / 2f));
                 }
                 else
                 {
@@ -1091,7 +1092,7 @@ public class ShipLayoutGenerator : MonoBehaviour
         CutVentInDoorWallTop(
             AddDoorWall("Door_Cargo_Front", 0f, cargoFrZ - wallThickness / 2f, cargoW, cargoH).transform,
             cargoH, dH, vY);
-        bounds.Add(new Vector4(0f, cargoCZ, cargoW / 2f, cargoD / 2f));
+        roomBounds.Add(new Vector4(0f, cargoCZ, cargoW / 2f, cargoD / 2f));
 
         // --- Engineering Hub ---
         var engGen = AddRoom("EngineeringHub", 0f, engCZ, engW, engH, engD);
@@ -1100,7 +1101,7 @@ public class ShipLayoutGenerator : MonoBehaviour
             AddDoorWall("Door_Eng_Back", 0f, engBk + wallThickness / 2f, engW, engH).transform,
             engH, dH, vY);
         DeleteChildWall(engGen, "Wall_Front");
-        bounds.Add(new Vector4(0f, engCZ, engW / 2f, engD / 2f));
+        roomBounds.Add(new Vector4(0f, engCZ, engW / 2f, engD / 2f));
 
         // Engineering front wall — varies by branch count
         if (branchCount == 1)
@@ -1172,7 +1173,7 @@ public class ShipLayoutGenerator : MonoBehaviour
         ShipModuleGenerator engReactGen = null, engLabGen = null;
         if (engHR)
         {
-            if (!BoundsOverlap(bounds, reactX, engCZ, reactW_ / 2f, reactD_ / 2f, 0.3f))
+            if (!BoundsOverlap(roomBounds, reactX, engCZ, reactW_ / 2f, reactD_ / 2f, 0.05f))
             {
                 DeleteChildWall(engGen, "Wall_Right");
                 CutVentInDoorWallTop(
@@ -1180,7 +1181,7 @@ public class ShipLayoutGenerator : MonoBehaviour
                     engH, dH, vY);
                 engReactGen = AddRoom(reactNm + "_EngR", reactX, engCZ, reactW_, roomHeight, reactD_);
                 DeleteChildWall(engReactGen, "Wall_Left");
-                bounds.Add(new Vector4(reactX, engCZ, reactW_ / 2f, reactD_ / 2f));
+                roomBounds.Add(new Vector4(reactX, engCZ, reactW_ / 2f, reactD_ / 2f));
             }
             else
             {
@@ -1190,7 +1191,7 @@ public class ShipLayoutGenerator : MonoBehaviour
         }
         if (engHL)
         {
-            if (!BoundsOverlap(bounds, labX, engCZ, labW_ / 2f, labD_ / 2f, 0.3f))
+            if (!BoundsOverlap(roomBounds, labX, engCZ, labW_ / 2f, labD_ / 2f, 0.05f))
             {
                 DeleteChildWall(engGen, "Wall_Left");
                 CutVentInDoorWallTop(
@@ -1198,7 +1199,7 @@ public class ShipLayoutGenerator : MonoBehaviour
                     engH, dH, vY);
                 engLabGen = AddRoom(labNm + "_EngL", labX, engCZ, labW_, roomHeight, labD_);
                 DeleteChildWall(engLabGen, "Wall_Right");
-                bounds.Add(new Vector4(labX, engCZ, labW_ / 2f, labD_ / 2f));
+                roomBounds.Add(new Vector4(labX, engCZ, labW_ / 2f, labD_ / 2f));
             }
             else
             {
@@ -1222,15 +1223,15 @@ public class ShipLayoutGenerator : MonoBehaviour
                 // ── Short branch: straight corridor → terminal room ──
                 float strZ = engFr + bStrLen[b] / 2f;
                 AddCorridor(bs + "Str", bX[b], strZ, corridorWidth, corridorHeight, bStrLen[b]);
-                bounds.Add(new Vector4(bX[b], strZ, corridorWidth / 2f, bStrLen[b] / 2f));
+                // Corridor bounds intentionally not registered — rooms attach to corridors.
 
                 // Terminal room — check for overlap before placing
-                if (!BoundsOverlap(bounds, bTermX[b], bTermCZ[b], bTermW[b] / 2f, bTermD[b] / 2f, 0.3f))
+                if (!BoundsOverlap(roomBounds, bTermX[b], bTermCZ[b], bTermW[b] / 2f, bTermD[b] / 2f, 0.05f))
                 {
                     termGen[b] = AddRoom(bTermNm[b], bTermX[b], bTermCZ[b], bTermW[b], roomHeight, bTermD[b]);
                     DeleteChildWall(termGen[b], "Wall_Back");
                     AddDoorWall("Door_" + bTermNm[b] + "_Bk", bTermX[b], bTermBk[b] + wallThickness / 2f, bTermW[b], roomHeight);
-                    bounds.Add(new Vector4(bTermX[b], bTermCZ[b], bTermW[b] / 2f, bTermD[b] / 2f));
+                    roomBounds.Add(new Vector4(bTermX[b], bTermCZ[b], bTermW[b] / 2f, bTermD[b] / 2f));
                 }
                 else
                 {
@@ -1242,7 +1243,7 @@ public class ShipLayoutGenerator : MonoBehaviour
                 // ── Z-shaped branch: straight → corner1 → side corridor → corner2 → final corridor → terminal ──
                 float strZ   = engFr + bStrLen[b] / 2f;
                 AddCorridor(bs + "Str", bX[b], strZ, corridorWidth, corridorHeight, bStrLen[b]);
-                bounds.Add(new Vector4(bX[b], strZ, corridorWidth / 2f, bStrLen[b] / 2f));
+                // Corridor bounds intentionally not registered — rooms attach to corridors.
 
                 // Corner 1 — turns from +Z into ±X
                 bool goLeft = bSideDir[b] == -1;
@@ -1250,7 +1251,6 @@ public class ShipLayoutGenerator : MonoBehaviour
                     AddCorner(bs + "C1", bX[b], bCor1Z[b], corridorWidth, corridorHeight, corridorWidth, false, true, false, true);
                 else
                     AddCorner(bs + "C1", bX[b], bCor1Z[b], corridorWidth, corridorHeight, corridorWidth, false, true, true, false);
-                bounds.Add(new Vector4(bX[b], bCor1Z[b], corridorWidth / 2f, corridorWidth / 2f));
 
                 // Side corridor (rotated 90° — runs along world X)
                 // Because the corridor is rotated 90°, its world X extent = depth, Z extent = width.
@@ -1268,30 +1268,27 @@ public class ShipLayoutGenerator : MonoBehaviour
                     sg.wallThickness = wallThickness; sg.detailLevel = detailLevel;
                     sg.overrideMaterial = prototypeMaterial; sg.Generate();
                 }
-                bounds.Add(new Vector4(sideCX, bCor1Z[b], bSideLen[b] / 2f, corridorWidth / 2f));
 
                 // Corner 2 — turns from ±X back into +Z
                 if (goLeft)
                     AddCorner(bs + "C2", bCor2X[b], bCor1Z[b], corridorWidth, corridorHeight, corridorWidth, true, false, true, false);
                 else
                     AddCorner(bs + "C2", bCor2X[b], bCor1Z[b], corridorWidth, corridorHeight, corridorWidth, true, false, false, true);
-                bounds.Add(new Vector4(bCor2X[b], bCor1Z[b], corridorWidth / 2f, corridorWidth / 2f));
 
                 // Final corridor
                 bFinCorGen[b] = AddCorridor(bs + "Fin", bCor2X[b], bFinCZ[b], corridorWidth, corridorHeight, bFinLen[b]);
-                bounds.Add(new Vector4(bCor2X[b], bFinCZ[b], corridorWidth / 2f, bFinLen[b] / 2f));
 
                 // Final-corridor side rooms — check for overlap before placing
                 if (bHL[b])
                 {
-                    if (!BoundsOverlap(bounds, bLX[b], bFinCZ[b], bLW[b] / 2f, bLD[b] / 2f, 0.3f))
+                    if (!BoundsOverlap(roomBounds, bLX[b], bFinCZ[b], bLW[b] / 2f, bLD[b] / 2f, 0.05f))
                     {
                         bLGen[b] = AddRoom(bLNm[b] + "_BL" + b, bLX[b], bFinCZ[b], bLW[b], roomHeight, bLD[b]);
                         DeleteChildWall(bLGen[b], "Wall_Right");
                         DeleteChildWall(bFinCorGen[b], "Wall_Left");
                         CutWallForDoor(bFinCorGen[b], "Wall_Left", true, corridorWidth, corridorHeight, bFinLen[b], 0f, dW, dH);
                         AddDoorWallSide("Door_" + bLNm[b] + "_BL" + b, bCor2X[b] - HalfCor, bFinCZ[b], bLW[b], roomHeight);
-                        bounds.Add(new Vector4(bLX[b], bFinCZ[b], bLW[b] / 2f, bLD[b] / 2f));
+                        roomBounds.Add(new Vector4(bLX[b], bFinCZ[b], bLW[b] / 2f, bLD[b] / 2f));
                     }
                     else
                     {
@@ -1301,14 +1298,14 @@ public class ShipLayoutGenerator : MonoBehaviour
                 }
                 if (bHR[b])
                 {
-                    if (!BoundsOverlap(bounds, bRX[b], bFinCZ[b], bRW[b] / 2f, bRD[b] / 2f, 0.3f))
+                    if (!BoundsOverlap(roomBounds, bRX[b], bFinCZ[b], bRW[b] / 2f, bRD[b] / 2f, 0.05f))
                     {
                         bRGen[b] = AddRoom(bRNm[b] + "_BR" + b, bRX[b], bFinCZ[b], bRW[b], roomHeight, bRD[b]);
                         DeleteChildWall(bRGen[b], "Wall_Left");
                         DeleteChildWall(bFinCorGen[b], "Wall_Right");
                         CutWallForDoor(bFinCorGen[b], "Wall_Right", false, corridorWidth, corridorHeight, bFinLen[b], 0f, dW, dH);
                         AddDoorWallSide("Door_" + bRNm[b] + "_BR" + b, bCor2X[b] + HalfCor, bFinCZ[b], bRW[b], roomHeight);
-                        bounds.Add(new Vector4(bRX[b], bFinCZ[b], bRW[b] / 2f, bRD[b] / 2f));
+                        roomBounds.Add(new Vector4(bRX[b], bFinCZ[b], bRW[b] / 2f, bRD[b] / 2f));
                     }
                     else
                     {
@@ -1318,12 +1315,12 @@ public class ShipLayoutGenerator : MonoBehaviour
                 }
 
                 // Terminal room — check for overlap before placing
-                if (!BoundsOverlap(bounds, bTermX[b], bTermCZ[b], bTermW[b] / 2f, bTermD[b] / 2f, 0.3f))
+                if (!BoundsOverlap(roomBounds, bTermX[b], bTermCZ[b], bTermW[b] / 2f, bTermD[b] / 2f, 0.05f))
                 {
                     termGen[b] = AddRoom(bTermNm[b], bTermX[b], bTermCZ[b], bTermW[b], roomHeight, bTermD[b]);
                     DeleteChildWall(termGen[b], "Wall_Back");
                     AddDoorWall("Door_" + bTermNm[b] + "_Bk", bTermX[b], bTermBk[b] + wallThickness / 2f, bTermW[b], roomHeight);
-                    bounds.Add(new Vector4(bTermX[b], bTermCZ[b], bTermW[b] / 2f, bTermD[b] / 2f));
+                    roomBounds.Add(new Vector4(bTermX[b], bTermCZ[b], bTermW[b] / 2f, bTermD[b] / 2f));
                 }
                 else
                 {
