@@ -196,6 +196,8 @@ public class ShipLayoutGenerator : MonoBehaviour
 
         float vY = roomHeight;
         float hvW = ventW / 2f;
+        float dropW = ventW * 0.5f;
+        float dropY = vY - ventH / 2f;
 
         AddVentCross("VJ_CorA", 0, vY, corAZ);
         AddVentTee("VJ_CorB", 0, vY, corBZ, false, false, false, true);
@@ -208,47 +210,47 @@ public class ShipLayoutGenerator : MonoBehaviour
         ConnectVent("VS_CorBToEng", 0, vY, corBZ + hvW, 0, vY, engZ - hvW);
         ConnectVent("VS_EngToFront", 0, vY, engZ + hvW, 0, vY, engFront - hvW);
 
-        ConnectVent("VB_Stor", -hvW, vY, corAZ, storX, vY, corAZ);
-        AddVentVertical("VDrop_Stor", storX, vY - 1.5f, corAZ, ventW, 1.5f, ventW);
-        ConnectVent("VB_Arm", hvW, vY, corAZ, armX, vY, corAZ);
-        AddVentVertical("VDrop_Arm", armX, vY - 1.5f, corAZ, ventW, 1.5f, ventW);
-        ConnectVent("VB_Life", -hvW, vY, corBZ, lifeSupX, vY, corBZ);
-        AddVentVertical("VDrop_Life", lifeSupX, vY - 1.5f, corBZ, ventW, 1.5f, ventW);
-        ConnectVent("VB_React", hvW, vY, engZ, reactX, vY, engZ);
-        AddVentVertical("VDrop_React", reactX, vY - 1.5f, engZ, ventW, 1.5f, ventW);
-        ConnectVent("VB_Lab", -hvW, vY, engZ, labX, vY, engZ);
-        AddVentVertical("VDrop_Lab", labX, vY - 1.5f, engZ, ventW, 1.5f, ventW);
-        AddVentVertical("VDrop_Dock", 0, vY - 1.5f, dockZ, ventW, 1.5f, ventW);
+        ConnectVent("VB_Stor", -hvW, vY, corAZ, storX + hvW, vY, corAZ);
+        AddVentVertical("VDrop_Stor", storX, dropY, corAZ, dropW, ventH, dropW);
+        ConnectVent("VB_Arm", hvW, vY, corAZ, armX - hvW, vY, corAZ);
+        AddVentVertical("VDrop_Arm", armX, dropY, corAZ, dropW, ventH, dropW);
+        ConnectVent("VB_Life", -hvW, vY, corBZ, lifeSupX + hvW, vY, corBZ);
+        AddVentVertical("VDrop_Life", lifeSupX, dropY, corBZ, dropW, ventH, dropW);
+        ConnectVent("VB_React", hvW, vY, engZ, reactX - hvW, vY, engZ);
+        AddVentVertical("VDrop_React", reactX, dropY, engZ, dropW, ventH, dropW);
+        ConnectVent("VB_Lab", -hvW, vY, engZ, labX + hvW, vY, engZ);
+        AddVentVertical("VDrop_Lab", labX, dropY, engZ, dropW, ventH, dropW);
+        AddVentVertical("VDrop_Dock", 0, dropY, dockZ, dropW, ventH, dropW);
 
-        ConnectVent("VL_EngToStr", -hvW, vY, engFront, corCStrX, vY, engFront);
+        ConnectVent("VL_EngToStr", -hvW, vY, engFront, corCStrX + hvW, vY, engFront);
         AddVentTee("VJ_CorCStart", corCStrX, vY, corCStrBack, true, false, true, false);
-        ConnectVent("VL_CorCStr", corCStrX, vY, corCStrBack + hvW, corCStrX, vY, corCStrFront);
+        ConnectVent("VL_CorCStr", corCStrX, vY, corCStrBack + hvW, corCStrX, vY, ccL1Z - hvW);
         AddVentCorner("VJ_L1", ccL1X, vY, ccL1Z, false, true, false, true);
         ConnectVent("VL_Side", ccL1X - hvW, vY, ccL1Z, ccL2X + hvW, vY, ccL2Z);
         AddVentCorner("VJ_L2", ccL2X, vY, ccL2Z, true, false, true, false);
-        ConnectVent("VL_ToJunc", ccL2X, vY, corCfinBack, corCfinX, vY, corCfinZ - hvW);
+        ConnectVent("VL_ToJunc", ccL2X, vY, ccL2Z + hvW, corCfinX, vY, corCfinZ - hvW);
         AddVentCross("VJ_CorCFin", corCfinX, vY, corCfinZ);
         ConnectVent("VL_ToMess", corCfinX, vY, corCfinZ + hvW, messX, vY, messBackEdge + messD - 1f);
-        ConnectVent("VB_Crew", corCfinX - hvW, vY, corCfinZ, crewX, vY, corCfinZ);
-        AddVentVertical("VDrop_Crew", crewX, vY - 1.5f, corCfinZ, ventW, 1.5f, ventW);
-        ConnectVent("VB_Sec", corCfinX + hvW, vY, corCfinZ, secX, vY, corCfinZ);
-        AddVentVertical("VDrop_Sec", secX, vY - 1.5f, corCfinZ, ventW, 1.5f, ventW);
-        AddVentVertical("VDrop_Mess", messX, vY - 1.5f, messZ, ventW, 1.5f, ventW);
+        ConnectVent("VB_Crew", corCfinX - hvW, vY, corCfinZ, crewX + hvW, vY, corCfinZ);
+        AddVentVertical("VDrop_Crew", crewX, dropY, corCfinZ, dropW, ventH, dropW);
+        ConnectVent("VB_Sec", corCfinX + hvW, vY, corCfinZ, secX - hvW, vY, corCfinZ);
+        AddVentVertical("VDrop_Sec", secX, dropY, corCfinZ, dropW, ventH, dropW);
+        AddVentVertical("VDrop_Mess", messX, dropY, messZ, dropW, ventH, dropW);
 
-        ConnectVent("VR_EngToStr", hvW, vY, engFront, corDStrX, vY, engFront);
+        ConnectVent("VR_EngToStr", hvW, vY, engFront, corDStrX - hvW, vY, engFront);
         AddVentTee("VJ_CorDStart", corDStrX, vY, corDStrBack, true, false, false, true);
-        ConnectVent("VR_CorDStr", corDStrX, vY, corDStrBack + hvW, corDStrX, vY, corDStrFront);
+        ConnectVent("VR_CorDStr", corDStrX, vY, corDStrBack + hvW, corDStrX, vY, ccR1Z - hvW);
         AddVentCorner("VJ_R1", ccR1X, vY, ccR1Z, false, true, true, false);
         ConnectVent("VR_Side", ccR1X + hvW, vY, ccR1Z, ccR2X - hvW, vY, ccR2Z);
         AddVentCorner("VJ_R2", ccR2X, vY, ccR2Z, true, false, false, true);
-        ConnectVent("VR_ToJunc", ccR2X, vY, corDfinBack, corDfinX, vY, corDfinZ - hvW);
+        ConnectVent("VR_ToJunc", ccR2X, vY, ccR2Z + hvW, corDfinX, vY, corDfinZ - hvW);
         AddVentCross("VJ_CorDFin", corDfinX, vY, corDfinZ);
         ConnectVent("VR_ToBridge", corDfinX, vY, corDfinZ + hvW, bridgeX, vY, bridgeBackEdge + bridgeD - 1f);
-        ConnectVent("VB_Med", corDfinX + hvW, vY, corDfinZ, medX, vY, corDfinZ);
-        AddVentVertical("VDrop_Med", medX, vY - 1.5f, corDfinZ, ventW, 1.5f, ventW);
-        ConnectVent("VB_Nav", corDfinX - hvW, vY, corDfinZ, navX, vY, corDfinZ);
-        AddVentVertical("VDrop_Nav", navX, vY - 1.5f, corDfinZ, ventW, 1.5f, ventW);
-        AddVentVertical("VDrop_Bridge", bridgeX, vY - 1.5f, bridgeZ, ventW, 1.5f, ventW);
+        ConnectVent("VB_Med", corDfinX + hvW, vY, corDfinZ, medX - hvW, vY, corDfinZ);
+        AddVentVertical("VDrop_Med", medX, dropY, corDfinZ, dropW, ventH, dropW);
+        ConnectVent("VB_Nav", corDfinX - hvW, vY, corDfinZ, navX + hvW, vY, corDfinZ);
+        AddVentVertical("VDrop_Nav", navX, dropY, corDfinZ, dropW, ventH, dropW);
+        AddVentVertical("VDrop_Bridge", bridgeX, dropY, bridgeZ, dropW, ventH, dropW);
 
         AddProp("DockCrate_1", -5f, 0, dockZ - 3f, ShipModuleGenerator.ModuleType.Crate, 1.2f, 0.8f, 1f);
         AddProp("DockCrate_2", -5.5f, 0, dockZ - 1f, ShipModuleGenerator.ModuleType.Crate, 0.9f, 1f, 0.9f);
