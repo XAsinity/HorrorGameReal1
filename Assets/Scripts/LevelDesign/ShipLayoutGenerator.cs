@@ -19,6 +19,8 @@ public class ShipLayoutGenerator : MonoBehaviour
     private float HalfCor { get { return corridorWidth / 2f; } }
     private float ventW = 0.9f;
     private float ventH = 0.7f;
+    private const float kDoorWidth = 1.4f;
+    private const float kDoorHeight = 2.4f;
 
     [ContextMenu("Generate Ship Layout")]
     public void GenerateShipLayout()
@@ -29,8 +31,8 @@ public class ShipLayoutGenerator : MonoBehaviour
             else DestroyImmediate(transform.GetChild(i).gameObject);
         }
 
-        float doorWidth = 1.4f;
-        float doorHeight = 2.4f;
+        float doorWidth = kDoorWidth;
+        float doorHeight = kDoorHeight;
         float dockW = 16f, dockD = 12f, dockH = 5.5f;
         float storW = 6f, storD = 5f;
         float armoryW = 4f, armoryD = 4f;
@@ -96,7 +98,7 @@ public class ShipLayoutGenerator : MonoBehaviour
 
         ShipModuleGenerator dockGen = AddRoom("DockingBay", 0, dockZ, dockW, dockH, dockD);
         DeleteChildWall(dockGen, "Wall_Front");
-        AddDoorWall("Door_Dock_Front", 0, dockFront - wallThickness / 2f, dockW, dockH);
+        CutVentInDoorWallTop(AddDoorWall("Door_Dock_Front", 0, dockFront - wallThickness / 2f, dockW, dockH).transform, dockH, kDoorHeight, roomHeight);
 
         ShipModuleGenerator corAGen = AddCorridor("CorridorA", 0, corAZ, corridorWidth, corridorHeight, corALen);
         ShipModuleGenerator storGen = AddRoom("StorageRoom", storX, corAZ, storW, roomHeight, storD);
@@ -113,9 +115,9 @@ public class ShipLayoutGenerator : MonoBehaviour
 
         ShipModuleGenerator cargoGen = AddRoom("CargoBay", 0, cargoZ, cargoW, cargoH, cargoD);
         DeleteChildWall(cargoGen, "Wall_Back");
-        AddDoorWall("Door_Cargo_Back", 0, cargoBack + wallThickness / 2f, cargoW, cargoH);
+        CutVentInDoorWallTop(AddDoorWall("Door_Cargo_Back", 0, cargoBack + wallThickness / 2f, cargoW, cargoH).transform, cargoH, kDoorHeight, roomHeight);
         DeleteChildWall(cargoGen, "Wall_Front");
-        AddDoorWall("Door_Cargo_Front", 0, cargoFront - wallThickness / 2f, cargoW, cargoH);
+        CutVentInDoorWallTop(AddDoorWall("Door_Cargo_Front", 0, cargoFront - wallThickness / 2f, cargoW, cargoH).transform, cargoH, kDoorHeight, roomHeight);
 
         ShipModuleGenerator corBGen = AddCorridor("CorridorB", 0, corBZ, corridorWidth, corridorHeight, corBLen);
         ShipModuleGenerator lifeGen = AddRoom("LifeSupport", lifeSupX, corBZ, lifeSupW, roomHeight, lifeSupD);
@@ -126,15 +128,15 @@ public class ShipLayoutGenerator : MonoBehaviour
 
         ShipModuleGenerator engGen = AddRoom("EngineeringHub", 0, engZ, engW, engH, engD);
         DeleteChildWall(engGen, "Wall_Back");
-        AddDoorWall("Door_Eng_Back", 0, engBack + wallThickness / 2f, engW, engH);
+        CutVentInDoorWallTop(AddDoorWall("Door_Eng_Back", 0, engBack + wallThickness / 2f, engW, engH).transform, engH, kDoorHeight, roomHeight);
         DeleteChildWall(engGen, "Wall_Front");
         BuildEngFrontWall(engW, engH, engFront, corCStrX, corDStrX, corridorWidth, doorHeight, doorWidth);
         DeleteChildWall(engGen, "Wall_Right");
-        AddDoorWallSide("Door_Eng_Reactor", engW / 2f - wallThickness / 2f, engZ, engD, engH);
+        CutVentInDoorWallTop(AddDoorWallSide("Door_Eng_Reactor", engW / 2f - wallThickness / 2f, engZ, engD, engH).transform, engH, kDoorHeight, roomHeight);
         ShipModuleGenerator reactGen = AddRoom("ReactorRoom", reactX, engZ, reactW, roomHeight, reactD);
         DeleteChildWall(reactGen, "Wall_Left");
         DeleteChildWall(engGen, "Wall_Left");
-        AddDoorWallSide("Door_Eng_Lab", -(engW / 2f) + wallThickness / 2f, engZ, engD, engH);
+        CutVentInDoorWallTop(AddDoorWallSide("Door_Eng_Lab", -(engW / 2f) + wallThickness / 2f, engZ, engD, engH).transform, engH, kDoorHeight, roomHeight);
         ShipModuleGenerator labGen = AddRoom("ScienceLab", labX, engZ, labW, roomHeight, labD);
         DeleteChildWall(labGen, "Wall_Right");
 
@@ -197,7 +199,8 @@ public class ShipLayoutGenerator : MonoBehaviour
         float vY = roomHeight;
         float hvW = ventW / 2f;
         float dropW = ventW * 0.5f;
-        float dropY = vY - ventH / 2f;
+        float dropH = ventH + wallThickness + 0.15f;
+        float dropY = vY - dropH / 2f;
 
         AddVentCross("VJ_CorA", 0, vY, corAZ);
         AddVentTee("VJ_CorB", 0, vY, corBZ, false, false, false, true);
@@ -211,16 +214,22 @@ public class ShipLayoutGenerator : MonoBehaviour
         ConnectVent("VS_EngToFront", 0, vY, engZ + hvW, 0, vY, engFront - hvW);
 
         ConnectVent("VB_Stor", -hvW, vY, corAZ, storX + hvW, vY, corAZ);
-        AddVentVertical("VDrop_Stor", storX, dropY, corAZ, dropW, ventH, dropW);
+        AddVentVertical("VDrop_Stor", storX, dropY, corAZ, dropW, dropH, dropW);
+        CutCeilingForVent(storGen, dropW, dropW);
         ConnectVent("VB_Arm", hvW, vY, corAZ, armX - hvW, vY, corAZ);
-        AddVentVertical("VDrop_Arm", armX, dropY, corAZ, dropW, ventH, dropW);
+        AddVentVertical("VDrop_Arm", armX, dropY, corAZ, dropW, dropH, dropW);
+        CutCeilingForVent(armGen, dropW, dropW);
         ConnectVent("VB_Life", -hvW, vY, corBZ, lifeSupX + hvW, vY, corBZ);
-        AddVentVertical("VDrop_Life", lifeSupX, dropY, corBZ, dropW, ventH, dropW);
+        AddVentVertical("VDrop_Life", lifeSupX, dropY, corBZ, dropW, dropH, dropW);
+        CutCeilingForVent(lifeGen, dropW, dropW);
         ConnectVent("VB_React", hvW, vY, engZ, reactX - hvW, vY, engZ);
-        AddVentVertical("VDrop_React", reactX, dropY, engZ, dropW, ventH, dropW);
+        AddVentVertical("VDrop_React", reactX, dropY, engZ, dropW, dropH, dropW);
+        CutCeilingForVent(reactGen, dropW, dropW);
         ConnectVent("VB_Lab", -hvW, vY, engZ, labX + hvW, vY, engZ);
-        AddVentVertical("VDrop_Lab", labX, dropY, engZ, dropW, ventH, dropW);
-        AddVentVertical("VDrop_Dock", 0, dropY, dockZ, dropW, ventH, dropW);
+        AddVentVertical("VDrop_Lab", labX, dropY, engZ, dropW, dropH, dropW);
+        CutCeilingForVent(labGen, dropW, dropW);
+        AddVentVertical("VDrop_Dock", 0, dropY, dockZ, dropW, dropH, dropW);
+        CutCeilingForVent(dockGen, dropW, dropW);
 
         ConnectVent("VL_EngToStr", -hvW, vY, engFront, corCStrX + hvW, vY, engFront);
         AddVentTee("VJ_CorCStart", corCStrX, vY, corCStrBack, true, false, true, false);
@@ -232,10 +241,13 @@ public class ShipLayoutGenerator : MonoBehaviour
         AddVentCross("VJ_CorCFin", corCfinX, vY, corCfinZ);
         ConnectVent("VL_ToMess", corCfinX, vY, corCfinZ + hvW, messX, vY, messBackEdge + messD - 1f);
         ConnectVent("VB_Crew", corCfinX - hvW, vY, corCfinZ, crewX + hvW, vY, corCfinZ);
-        AddVentVertical("VDrop_Crew", crewX, dropY, corCfinZ, dropW, ventH, dropW);
+        AddVentVertical("VDrop_Crew", crewX, dropY, corCfinZ, dropW, dropH, dropW);
+        CutCeilingForVent(crewGen, dropW, dropW);
         ConnectVent("VB_Sec", corCfinX + hvW, vY, corCfinZ, secX - hvW, vY, corCfinZ);
-        AddVentVertical("VDrop_Sec", secX, dropY, corCfinZ, dropW, ventH, dropW);
-        AddVentVertical("VDrop_Mess", messX, dropY, messZ, dropW, ventH, dropW);
+        AddVentVertical("VDrop_Sec", secX, dropY, corCfinZ, dropW, dropH, dropW);
+        CutCeilingForVent(secGen, dropW, dropW);
+        AddVentVertical("VDrop_Mess", messX, dropY, messZ, dropW, dropH, dropW);
+        CutCeilingForVent(messGen, dropW, dropW);
 
         ConnectVent("VR_EngToStr", hvW, vY, engFront, corDStrX - hvW, vY, engFront);
         AddVentTee("VJ_CorDStart", corDStrX, vY, corDStrBack, true, false, false, true);
@@ -247,10 +259,13 @@ public class ShipLayoutGenerator : MonoBehaviour
         AddVentCross("VJ_CorDFin", corDfinX, vY, corDfinZ);
         ConnectVent("VR_ToBridge", corDfinX, vY, corDfinZ + hvW, bridgeX, vY, bridgeBackEdge + bridgeD - 1f);
         ConnectVent("VB_Med", corDfinX + hvW, vY, corDfinZ, medX - hvW, vY, corDfinZ);
-        AddVentVertical("VDrop_Med", medX, dropY, corDfinZ, dropW, ventH, dropW);
+        AddVentVertical("VDrop_Med", medX, dropY, corDfinZ, dropW, dropH, dropW);
+        CutCeilingForVent(medGen, dropW, dropW);
         ConnectVent("VB_Nav", corDfinX - hvW, vY, corDfinZ, navX + hvW, vY, corDfinZ);
-        AddVentVertical("VDrop_Nav", navX, dropY, corDfinZ, dropW, ventH, dropW);
-        AddVentVertical("VDrop_Bridge", bridgeX, dropY, bridgeZ, dropW, ventH, dropW);
+        AddVentVertical("VDrop_Nav", navX, dropY, corDfinZ, dropW, dropH, dropW);
+        CutCeilingForVent(navGen, dropW, dropW);
+        AddVentVertical("VDrop_Bridge", bridgeX, dropY, bridgeZ, dropW, dropH, dropW);
+        CutCeilingForVent(bridgeGen, dropW, dropW);
 
         AddProp("DockCrate_1", -5f, 0, dockZ - 3f, ShipModuleGenerator.ModuleType.Crate, 1.2f, 0.8f, 1f);
         AddProp("DockCrate_2", -5.5f, 0, dockZ - 1f, ShipModuleGenerator.ModuleType.Crate, 0.9f, 1f, 0.9f);
@@ -307,7 +322,19 @@ public class ShipLayoutGenerator : MonoBehaviour
         float cRight = rightDoorX - halfOpening;
         float cw = cRight - cLeft;
         if (cw > 0.01f)
-            MakeBoxOnParent(transform, "EngFW_C", new Vector3(cLeft + cw / 2f, engH / 2f, wallZ), cw, engH, wallThickness);
+        {
+            // EngFW_C is fully covered by VJ_EngFront + the starts of VL/VR_EngToStr;
+            // split into below-vent and above-vent sections, omitting the vent band.
+            float cx = cLeft + cw / 2f;
+            float vBot = roomHeight;
+            float vTop = roomHeight + ventH;
+            float cBotH = vBot;
+            float cTopH = engH - vTop;
+            if (cBotH > 0.01f)
+                MakeBoxOnParent(transform, "EngFW_C_Bot", new Vector3(cx, cBotH / 2f, wallZ), cw, cBotH, wallThickness);
+            if (cTopH > 0.01f)
+                MakeBoxOnParent(transform, "EngFW_C_Top", new Vector3(cx, vTop + cTopH / 2f, wallZ), cw, cTopH, wallThickness);
+        }
 
         float rw = halfEngW - (rightDoorX + halfOpening);
         if (rw > 0.01f)
@@ -316,8 +343,43 @@ public class ShipLayoutGenerator : MonoBehaviour
         float topH = engH - doorH;
         if (topH > 0.01f)
         {
-            MakeBoxOnParent(transform, "EngFW_LT", new Vector3(leftDoorX, doorH + topH / 2f, wallZ), doorOpeningW, topH, wallThickness);
-            MakeBoxOnParent(transform, "EngFW_RT", new Vector3(rightDoorX, doorH + topH / 2f, wallZ), doorOpeningW, topH, wallThickness);
+            // VL_EngToStr vent passes through the right portion of EngFW_LT,
+            // and VR_EngToStr passes through the left portion of EngFW_RT.
+            // holeW: the width the vent reaches inside the panel = (doorOpeningW - ventW) / 2f
+            float hvW = ventW / 2f;
+            float holeW = halfOpening - hvW;
+            float vBot = roomHeight;
+            float vTop = roomHeight + ventH;
+            float belowH = vBot - doorH;
+            float aboveH = engH - vTop;
+
+            // EngFW_LT: solid left section + bottom/top of right (vent) section
+            float ltSolidW = halfOpening + hvW;
+            float ltSolidCX = leftDoorX - halfOpening + ltSolidW / 2f;
+            float ltHoleCX = leftDoorX + hvW + holeW / 2f;
+            if (ltSolidW > 0.01f)
+                MakeBoxOnParent(transform, "EngFW_LT_L", new Vector3(ltSolidCX, doorH + topH / 2f, wallZ), ltSolidW, topH, wallThickness);
+            if (holeW > 0.01f)
+            {
+                if (belowH > 0.01f)
+                    MakeBoxOnParent(transform, "EngFW_LT_Bot", new Vector3(ltHoleCX, doorH + belowH / 2f, wallZ), holeW, belowH, wallThickness);
+                if (aboveH > 0.01f)
+                    MakeBoxOnParent(transform, "EngFW_LT_Top", new Vector3(ltHoleCX, vTop + aboveH / 2f, wallZ), holeW, aboveH, wallThickness);
+            }
+
+            // EngFW_RT: solid right section + bottom/top of left (vent) section
+            float rtSolidW = halfOpening + hvW;
+            float rtSolidCX = rightDoorX + halfOpening - rtSolidW / 2f;
+            float rtHoleCX = rightDoorX - halfOpening + holeW / 2f;
+            if (rtSolidW > 0.01f)
+                MakeBoxOnParent(transform, "EngFW_RT_R", new Vector3(rtSolidCX, doorH + topH / 2f, wallZ), rtSolidW, topH, wallThickness);
+            if (holeW > 0.01f)
+            {
+                if (belowH > 0.01f)
+                    MakeBoxOnParent(transform, "EngFW_RT_Bot", new Vector3(rtHoleCX, doorH + belowH / 2f, wallZ), holeW, belowH, wallThickness);
+                if (aboveH > 0.01f)
+                    MakeBoxOnParent(transform, "EngFW_RT_Top", new Vector3(rtHoleCX, vTop + aboveH / 2f, wallZ), holeW, aboveH, wallThickness);
+            }
         }
 
         if (detailLevel >= 1)
@@ -484,27 +546,29 @@ public class ShipLayoutGenerator : MonoBehaviour
         g.detailLevel = detailLevel; g.overrideMaterial = prototypeMaterial; g.Generate();
     }
 
-    private void AddDoorWall(string n, float x, float z, float w, float h)
+    private ShipModuleGenerator AddDoorWall(string n, float x, float z, float w, float h)
     {
         GameObject o = new GameObject(n); o.transform.SetParent(transform);
         o.transform.localPosition = new Vector3(x, 0, z);
         ShipModuleGenerator g = o.AddComponent<ShipModuleGenerator>();
         g.moduleType = ShipModuleGenerator.ModuleType.DoorWall;
-        g.width = w; g.height = h; g.doorWidth = 1.4f; g.doorHeight = 2.4f;
+        g.width = w; g.height = h; g.doorWidth = kDoorWidth; g.doorHeight = kDoorHeight;
         g.wallThickness = wallThickness; g.detailLevel = detailLevel;
         g.overrideMaterial = prototypeMaterial; g.Generate();
+        return g;
     }
 
-    private void AddDoorWallSide(string n, float x, float z, float w, float h)
+    private ShipModuleGenerator AddDoorWallSide(string n, float x, float z, float w, float h)
     {
         GameObject o = new GameObject(n); o.transform.SetParent(transform);
         o.transform.localPosition = new Vector3(x, 0, z);
         o.transform.localRotation = Quaternion.Euler(0, 90, 0);
         ShipModuleGenerator g = o.AddComponent<ShipModuleGenerator>();
         g.moduleType = ShipModuleGenerator.ModuleType.DoorWall;
-        g.width = w; g.height = h; g.doorWidth = 1.4f; g.doorHeight = 2.4f;
+        g.width = w; g.height = h; g.doorWidth = kDoorWidth; g.doorHeight = kDoorHeight;
         g.wallThickness = wallThickness; g.detailLevel = detailLevel;
         g.overrideMaterial = prototypeMaterial; g.Generate();
+        return g;
     }
 
     private void AddProp(string n, float x, float y, float z, ShipModuleGenerator.ModuleType t, float w, float h, float d)
@@ -515,5 +579,93 @@ public class ShipLayoutGenerator : MonoBehaviour
         g.moduleType = t; g.width = w; g.height = h; g.depth = d;
         g.wallThickness = wallThickness; g.detailLevel = detailLevel;
         g.overrideMaterial = prototypeMaterial; g.Generate();
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    //  CUT CEILING FOR VENT — replaces the solid ceiling slab of a
+    //  room with 4 segments that leave a rectangular opening at the
+    //  room's local XZ origin (where the vent drop descends).
+    // ═══════════════════════════════════════════════════════════════
+
+    private void CutCeilingForVent(ShipModuleGenerator roomGen, float holeW, float holeD)
+    {
+        DeleteChildWall(roomGen, "Ceiling");
+
+        float w = roomGen.width;
+        float d = roomGen.depth;
+        float h = roomGen.height;
+        float t = wallThickness;
+        float ceilY = h - t / 2f;
+        float hw = holeW / 2f;
+        float hd = holeD / 2f;
+
+        float leftW = w / 2f - hw;
+        if (leftW > 0.01f)
+            MakeBoxOnParent(roomGen.transform, "Ceiling_L",
+                new Vector3(-(hw + leftW / 2f), ceilY, 0), leftW, t, d);
+
+        float rightW = w / 2f - hw;
+        if (rightW > 0.01f)
+            MakeBoxOnParent(roomGen.transform, "Ceiling_R",
+                new Vector3(hw + rightW / 2f, ceilY, 0), rightW, t, d);
+
+        float frontD = d / 2f - hd;
+        if (frontD > 0.01f)
+            MakeBoxOnParent(roomGen.transform, "Ceiling_F",
+                new Vector3(0, ceilY, hd + frontD / 2f), holeW, t, frontD);
+
+        float backD = d / 2f - hd;
+        if (backD > 0.01f)
+            MakeBoxOnParent(roomGen.transform, "Ceiling_B",
+                new Vector3(0, ceilY, -(hd + backD / 2f)), holeW, t, backD);
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    //  CUT VENT IN DOOR WALL TOP — removes the solid DoorWall_Top
+    //  section from a tall door wall and replaces it with pieces that
+    //  leave a vent-sized opening where the vent duct passes through.
+    //  Used for rooms whose wall height exceeds vY (= roomHeight).
+    // ═══════════════════════════════════════════════════════════════
+
+    private void CutVentInDoorWallTop(Transform doorWallParent, float wallH, float doorH, float vY)
+    {
+        for (int i = doorWallParent.childCount - 1; i >= 0; i--)
+        {
+            if (doorWallParent.GetChild(i).name == "DoorWall_Top")
+            {
+                if (Application.isPlaying) Destroy(doorWallParent.GetChild(i).gameObject);
+                else DestroyImmediate(doorWallParent.GetChild(i).gameObject);
+                break;
+            }
+        }
+
+        float topH = wallH - doorH;
+        if (topH <= 0.01f) return;
+
+        float origDoorW = kDoorWidth;   // matches doorWidth in AddDoorWall/AddDoorWallSide
+        float hw = ventW / 2f;
+        float sideW = (origDoorW - ventW) / 2f;
+        float belowH = vY - doorH;
+        float aboveH = wallH - (vY + ventH);
+
+        if (sideW > 0.01f)
+        {
+            MakeBoxOnParent(doorWallParent, "DoorWall_Top_L",
+                new Vector3(-(hw + sideW / 2f), doorH + topH / 2f, 0),
+                sideW, topH, wallThickness);
+            MakeBoxOnParent(doorWallParent, "DoorWall_Top_R",
+                new Vector3(hw + sideW / 2f, doorH + topH / 2f, 0),
+                sideW, topH, wallThickness);
+        }
+
+        if (belowH > 0.01f)
+            MakeBoxOnParent(doorWallParent, "DoorWall_Top_Bot",
+                new Vector3(0, doorH + belowH / 2f, 0),
+                ventW, belowH, wallThickness);
+
+        if (aboveH > 0.01f)
+            MakeBoxOnParent(doorWallParent, "DoorWall_Top_Abv",
+                new Vector3(0, vY + ventH + aboveH / 2f, 0),
+                ventW, aboveH, wallThickness);
     }
 }
