@@ -207,25 +207,38 @@ public class ShipLayoutGenerator : MonoBehaviour
         AddVentCross("VJ_EngCenter", 0, vY, engZ);
         AddVentTee("VJ_EngFront", 0, vY, engFront, false, true, false, false);
 
-        ConnectVent("VS_DockToCorA", 0, vY, dockZ - dockD / 2f + 1f, 0, vY, corAZ - hvW);
+        ConnectVent("VS_DockToCorA", 0, vY, dockZ - dockD / 2f + 1f, 0, vY, dockZ - hvW);
+        AddVentElbow("VElbow_Dock", 0, vY, dockZ, false, false, true, true);
+        ConnectVent("VS_DockToCorA_2", 0, vY, dockZ + hvW, 0, vY, corAZ - hvW);
         ConnectVent("VS_CorAToCargo", 0, vY, corAZ + hvW, 0, vY, cargoFront);
         ConnectVent("VS_CargoToCorB", 0, vY, cargoFront, 0, vY, corBZ - hvW);
         ConnectVent("VS_CorBToEng", 0, vY, corBZ + hvW, 0, vY, engZ - hvW);
         ConnectVent("VS_EngToFront", 0, vY, engZ + hvW, 0, vY, engFront - hvW);
 
-        ConnectVent("VB_Stor", -hvW, vY, corAZ, storX, vY, corAZ);
+        // ── Branch vents + elbows + vertical drops ──────────────────
+        // Each horizontal branch is shortened by hvW so the elbow fits
+        // flush at the junction point.  The elbow (VentElbow) has its
+        // open side facing the incoming branch and its open bottom
+        // connecting to the vertical drop below.
+
+        ConnectVent("VB_Stor", -hvW, vY, corAZ, storX + hvW, vY, corAZ);
+        AddVentElbow("VElbow_Stor", storX, vY, corAZ, true, true, true, false);
         AddVentVertical("VDrop_Stor", storX, dropY, corAZ, dropW, dropH, dropW);
         CutCeilingForVent(storGen, dropW, dropW);
-        ConnectVent("VB_Arm", hvW, vY, corAZ, armX, vY, corAZ);
+        ConnectVent("VB_Arm", hvW, vY, corAZ, armX - hvW, vY, corAZ);
+        AddVentElbow("VElbow_Arm", armX, vY, corAZ, true, true, false, true);
         AddVentVertical("VDrop_Arm", armX, dropY, corAZ, dropW, dropH, dropW);
         CutCeilingForVent(armGen, dropW, dropW);
-        ConnectVent("VB_Life", -hvW, vY, corBZ, lifeSupX, vY, corBZ);
+        ConnectVent("VB_Life", -hvW, vY, corBZ, lifeSupX + hvW, vY, corBZ);
+        AddVentElbow("VElbow_Life", lifeSupX, vY, corBZ, true, true, true, false);
         AddVentVertical("VDrop_Life", lifeSupX, dropY, corBZ, dropW, dropH, dropW);
         CutCeilingForVent(lifeGen, dropW, dropW);
-        ConnectVent("VB_React", hvW, vY, engZ, reactX, vY, engZ);
+        ConnectVent("VB_React", hvW, vY, engZ, reactX - hvW, vY, engZ);
+        AddVentElbow("VElbow_React", reactX, vY, engZ, true, true, false, true);
         AddVentVertical("VDrop_React", reactX, dropY, engZ, dropW, dropH, dropW);
         CutCeilingForVent(reactGen, dropW, dropW);
-        ConnectVent("VB_Lab", -hvW, vY, engZ, labX, vY, engZ);
+        ConnectVent("VB_Lab", -hvW, vY, engZ, labX + hvW, vY, engZ);
+        AddVentElbow("VElbow_Lab", labX, vY, engZ, true, true, true, false);
         AddVentVertical("VDrop_Lab", labX, dropY, engZ, dropW, dropH, dropW);
         CutCeilingForVent(labGen, dropW, dropW);
         AddVentVertical("VDrop_Dock", 0, dropY, dockZ, dropW, dropH, dropW);
@@ -239,11 +252,15 @@ public class ShipLayoutGenerator : MonoBehaviour
         AddVentCorner("VJ_L2", ccL2X, vY, ccL2Z, true, false, true, false);
         ConnectVent("VL_ToJunc", ccL2X, vY, ccL2Z + hvW, corCfinX, vY, corCfinZ - hvW);
         AddVentCross("VJ_CorCFin", corCfinX, vY, corCfinZ);
-        ConnectVent("VL_ToMess", corCfinX, vY, corCfinZ + hvW, messX, vY, messBackEdge + messD - 1f);
-        ConnectVent("VB_Crew", corCfinX - hvW, vY, corCfinZ, crewX, vY, corCfinZ);
+        ConnectVent("VL_ToMess_A", corCfinX, vY, corCfinZ + hvW, messX, vY, messZ - hvW);
+        AddVentElbow("VElbow_Mess", messX, vY, messZ, false, false, true, true);
+        ConnectVent("VL_ToMess_B", messX, vY, messZ + hvW, messX, vY, messBackEdge + messD - 1f);
+        ConnectVent("VB_Crew", corCfinX - hvW, vY, corCfinZ, crewX + hvW, vY, corCfinZ);
+        AddVentElbow("VElbow_Crew", crewX, vY, corCfinZ, true, true, true, false);
         AddVentVertical("VDrop_Crew", crewX, dropY, corCfinZ, dropW, dropH, dropW);
         CutCeilingForVent(crewGen, dropW, dropW);
-        ConnectVent("VB_Sec", corCfinX + hvW, vY, corCfinZ, secX, vY, corCfinZ);
+        ConnectVent("VB_Sec", corCfinX + hvW, vY, corCfinZ, secX - hvW, vY, corCfinZ);
+        AddVentElbow("VElbow_Sec", secX, vY, corCfinZ, true, true, false, true);
         AddVentVertical("VDrop_Sec", secX, dropY, corCfinZ, dropW, dropH, dropW);
         CutCeilingForVent(secGen, dropW, dropW);
         AddVentVertical("VDrop_Mess", messX, dropY, messZ, dropW, dropH, dropW);
@@ -257,11 +274,15 @@ public class ShipLayoutGenerator : MonoBehaviour
         AddVentCorner("VJ_R2", ccR2X, vY, ccR2Z, true, false, false, true);
         ConnectVent("VR_ToJunc", ccR2X, vY, ccR2Z + hvW, corDfinX, vY, corDfinZ - hvW);
         AddVentCross("VJ_CorDFin", corDfinX, vY, corDfinZ);
-        ConnectVent("VR_ToBridge", corDfinX, vY, corDfinZ + hvW, bridgeX, vY, bridgeBackEdge + bridgeD - 1f);
-        ConnectVent("VB_Med", corDfinX + hvW, vY, corDfinZ, medX, vY, corDfinZ);
+        ConnectVent("VR_ToBridge_A", corDfinX, vY, corDfinZ + hvW, bridgeX, vY, bridgeZ - hvW);
+        AddVentElbow("VElbow_Bridge", bridgeX, vY, bridgeZ, false, false, true, true);
+        ConnectVent("VR_ToBridge_B", bridgeX, vY, bridgeZ + hvW, bridgeX, vY, bridgeBackEdge + bridgeD - 1f);
+        ConnectVent("VB_Med", corDfinX + hvW, vY, corDfinZ, medX - hvW, vY, corDfinZ);
+        AddVentElbow("VElbow_Med", medX, vY, corDfinZ, true, true, false, true);
         AddVentVertical("VDrop_Med", medX, dropY, corDfinZ, dropW, dropH, dropW);
         CutCeilingForVent(medGen, dropW, dropW);
-        ConnectVent("VB_Nav", corDfinX - hvW, vY, corDfinZ, navX, vY, corDfinZ);
+        ConnectVent("VB_Nav", corDfinX - hvW, vY, corDfinZ, navX + hvW, vY, corDfinZ);
+        AddVentElbow("VElbow_Nav", navX, vY, corDfinZ, true, true, true, false);
         AddVentVertical("VDrop_Nav", navX, dropY, corDfinZ, dropW, dropH, dropW);
         CutCeilingForVent(navGen, dropW, dropW);
         AddVentVertical("VDrop_Bridge", bridgeX, dropY, bridgeZ, dropW, dropH, dropW);
@@ -413,7 +434,10 @@ public class ShipLayoutGenerator : MonoBehaviour
     {
         GameObject obj = new GameObject(name);
         obj.transform.SetParent(transform);
-        obj.transform.localPosition = new Vector3(x, y, z);
+        // After Quaternion.Euler(90,0,0) the shaft's local Y axis maps to World +Z.
+        // The shaft is bottom-anchored (local Y spans 0..w), so without correction it
+        // would extend from z to z+w.  Subtract w/2 to centre the cross-section at z.
+        obj.transform.localPosition = new Vector3(x, y, z - w / 2f);
         obj.transform.localRotation = Quaternion.Euler(90, 0, 0);
         ShipModuleGenerator gen = obj.AddComponent<ShipModuleGenerator>();
         gen.moduleType = ShipModuleGenerator.ModuleType.VentShaft;
@@ -444,6 +468,30 @@ public class ShipLayoutGenerator : MonoBehaviour
         obj.transform.localPosition = new Vector3(x, y, z);
         ShipModuleGenerator gen = obj.AddComponent<ShipModuleGenerator>();
         gen.moduleType = ShipModuleGenerator.ModuleType.VentTee;
+        gen.width = ventW; gen.height = ventH; gen.depth = ventW;
+        gen.cornerWallBack = wB; gen.cornerWallFront = wF;
+        gen.cornerWallLeft = wL; gen.cornerWallRight = wR;
+        gen.wallThickness = wallThickness; gen.detailLevel = detailLevel;
+        gen.overrideMaterial = prototypeMaterial; gen.Generate();
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    //  Vent elbow — placed at the junction where a horizontal branch
+    //  meets a vertical drop.  Uses VentElbow (top + selective walls,
+    //  no bottom) so the drop can pass through the open bottom.
+    //
+    //  wB/wF/wL/wR — whether Back/Front/Left/Right walls are present.
+    //  Set the wall facing the incoming horizontal branch to false
+    //  (open).  For trunk-to-drop (trunk runs ±Z) set wL=wR=true,
+    //  wB=wF=false.
+    // ─────────────────────────────────────────────────────────────
+    private void AddVentElbow(string name, float x, float y, float z, bool wB, bool wF, bool wL, bool wR)
+    {
+        GameObject obj = new GameObject(name);
+        obj.transform.SetParent(transform);
+        obj.transform.localPosition = new Vector3(x, y, z);
+        ShipModuleGenerator gen = obj.AddComponent<ShipModuleGenerator>();
+        gen.moduleType = ShipModuleGenerator.ModuleType.VentElbow;
         gen.width = ventW; gen.height = ventH; gen.depth = ventW;
         gen.cornerWallBack = wB; gen.cornerWallFront = wF;
         gen.cornerWallLeft = wL; gen.cornerWallRight = wR;

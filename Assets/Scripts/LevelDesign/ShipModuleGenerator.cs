@@ -14,6 +14,7 @@ public class ShipModuleGenerator : MonoBehaviour
         VentCorner,
         VentTee,
         VentCross,
+        VentElbow,
         Crate,
         Console,
         Pillar
@@ -66,6 +67,7 @@ public class ShipModuleGenerator : MonoBehaviour
             case ModuleType.VentCorner: GenerateVentCorner(); break;
             case ModuleType.VentTee: GenerateVentTee(); break;
             case ModuleType.VentCross: GenerateVentCross(); break;
+            case ModuleType.VentElbow: GenerateVentElbow(); break;
             case ModuleType.Crate: GenerateCrate(); break;
             case ModuleType.Console: GenerateConsole(); break;
             case ModuleType.Pillar: GeneratePillar(); break;
@@ -315,6 +317,42 @@ public class ShipModuleGenerator : MonoBehaviour
 
         MakeBox("Bottom", new Vector3(0, t / 2f, 0), w, t, d);
         MakeBox("Top", new Vector3(0, h - t / 2f, 0), w, t, d);
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    //  VENT ELBOW — horizontal-to-vertical 90° connector
+    //  Has top panel only (NO bottom — open downward for vertical drop).
+    //  Selective side walls via cornerWallBack/Front/Left/Right.
+    //
+    //  For branch-to-drop junctions: set 3 walls true, 1 false
+    //  (the open side faces the incoming horizontal branch).
+    //
+    //  For trunk-to-drop junctions (trunk runs ±Z): set
+    //  cornerWallLeft = cornerWallRight = true, Back = Front = false.
+    // ═══════════════════════════════════════════════════════════════
+
+    private void GenerateVentElbow()
+    {
+        float w = width > 0 ? width : 0.9f;
+        float h = height > 0 ? height : 0.7f;
+        float d = depth > 0 ? depth : 0.9f;
+        float t = 0.02f;
+
+        // Top panel only — bottom is intentionally absent so the
+        // vertical drop shaft connects through the opening below.
+        MakeBox("Top", new Vector3(0, h - t / 2f, 0), w, t, d);
+
+        float hw = w / 2f;
+        float hd = d / 2f;
+
+        if (cornerWallFront)
+            MakeBox("Wall_Front", new Vector3(0, h / 2f, hd - t / 2f), w, h, t);
+        if (cornerWallBack)
+            MakeBox("Wall_Back", new Vector3(0, h / 2f, -hd + t / 2f), w, h, t);
+        if (cornerWallLeft)
+            MakeBox("Wall_Left", new Vector3(-hw + t / 2f, h / 2f, 0), t, h, d);
+        if (cornerWallRight)
+            MakeBox("Wall_Right", new Vector3(hw - t / 2f, h / 2f, 0), t, h, d);
     }
 
     // ═══════════════════════════════════════════════════════════════
