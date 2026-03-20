@@ -830,7 +830,7 @@ public class ShipLayoutGenerator : MonoBehaviour
                                        : (preferLeft ?  1 : -1);
                 float rW = Mathf.Max(3f, baseW * mults[mi]);
                 float rD = Mathf.Max(3f, baseD * mults[mi]);
-                float cx = side * (HalfCor + rD / 2f);
+                float cx = side * (HalfCor + rW / 2f);
                 if (ProcTryRegister(bds, cx, corZ, rW / 2f, rD / 2f, pad, excludeIdx))
                 {
                     finalCX = cx; finalW = rW; finalD = rD;
@@ -878,24 +878,17 @@ public class ShipLayoutGenerator : MonoBehaviour
             float sw   = segR - prevEdge;
             if (sw > 0.01f)
             {
-                float cx      = prevEdge + sw / 2f;
-                bool interior = (i > 0 && i < openingXs.Length);
-                if (interior)
-                {
-                    // Lateral vent runs through this zone — omit the vent band
-                    if (roomHeight > 0.01f)
-                        MakeBoxOnParent(transform, "EngFWD_MBot_" + i,
-                            new Vector3(cx, roomHeight / 2f, wallZ), sw, roomHeight, wallThickness);
-                    if (engH - vTop > 0.01f)
-                        MakeBoxOnParent(transform, "EngFWD_MTop_" + i,
-                            new Vector3(cx, vTop + (engH - vTop) / 2f, wallZ), sw, engH - vTop, wallThickness);
-                }
-                else
-                {
-                    // Exterior panel — no vent passes through, full height
-                    MakeBoxOnParent(transform, "EngFWD_Seg_" + i,
-                        new Vector3(cx, engH / 2f, wallZ), sw, engH, wallThickness);
-                }
+                float cx = prevEdge + sw / 2f;
+                // Lateral vent trunk runs along the full width of engineering at ceiling
+                // level (roomHeight..roomHeight+ventH).  ALL segments — exterior and
+                // interior alike — must be split at the vent band so the shaft passes
+                // through without clipping geometry.
+                if (roomHeight > 0.01f)
+                    MakeBoxOnParent(transform, "EngFWD_Bot_" + i,
+                        new Vector3(cx, roomHeight / 2f, wallZ), sw, roomHeight, wallThickness);
+                if (engH - vTop > 0.01f)
+                    MakeBoxOnParent(transform, "EngFWD_Top_" + i,
+                        new Vector3(cx, vTop + (engH - vTop) / 2f, wallZ), sw, engH - vTop, wallThickness);
             }
             if (i < openingXs.Length)
                 prevEdge = openingXs[i] + hOp;
@@ -1211,7 +1204,7 @@ public class ShipLayoutGenerator : MonoBehaviour
                 {
                     float rW2 = Mathf.Max(3f, pRW[k] * mults2[mi2]);
                     float rD2 = Mathf.Max(3f, pRD[k] * mults2[mi2]);
-                    float cx2 = side2 * (HalfCor + rD2 / 2f);
+                    float cx2 = side2 * (HalfCor + rW2 / 2f);
                     if (ProcTryRegister(bds, cx2, sCZ[i], rW2 / 2f, rD2 / 2f, kPad, spineCorBdsIdx))
                     {
                         pp++;
@@ -1240,7 +1233,7 @@ public class ShipLayoutGenerator : MonoBehaviour
         if (pp < poolSize && rng.NextDouble() > 0.35f)
         {
             int k = pidx[pp]; pp++;
-            float cx = engW / 2f + pRD[k] / 2f;
+            float cx = engW / 2f + pRW[k] / 2f;
             if (ProcTryRegister(bds, cx, engCZ, pRW[k] / 2f, pRD[k] / 2f, kPad, 2))
             {
                 engHR = true; reactNm = pName[k];
@@ -1257,7 +1250,7 @@ public class ShipLayoutGenerator : MonoBehaviour
         if (pp < poolSize && rng.NextDouble() > 0.35f)
         {
             int k = pidx[pp]; pp++;
-            float cx = -(engW / 2f + pRD[k] / 2f);
+            float cx = -(engW / 2f + pRW[k] / 2f);
             if (ProcTryRegister(bds, cx, engCZ, pRW[k] / 2f, pRD[k] / 2f, kPad, 2))
             {
                 engHL = true; labNm = pName[k];
@@ -1320,7 +1313,7 @@ public class ShipLayoutGenerator : MonoBehaviour
             if (pp < poolSize && rng.NextDouble() > 0.4f)
             {
                 int k = pidx[pp]; pp++;
-                float cx = bCor2X[b] - HalfCor - pRD[k] / 2f;
+                float cx = bCor2X[b] - HalfCor - pRW[k] / 2f;
                 if (ProcTryRegister(bds, cx, bFinCZ[b], pRW[k] / 2f, pRD[k] / 2f, kPad, bFinCorBdsIdx[b]))
                 { bHL[b] = true; bLNm[b] = pName[k]; bLW[b] = pRW[k]; bLD[b] = pRD[k]; bLX[b] = cx; roomsPlaced++; }
                 else
@@ -1329,7 +1322,7 @@ public class ShipLayoutGenerator : MonoBehaviour
             if (pp < poolSize && rng.NextDouble() > 0.4f)
             {
                 int k = pidx[pp]; pp++;
-                float cx = bCor2X[b] + HalfCor + pRD[k] / 2f;
+                float cx = bCor2X[b] + HalfCor + pRW[k] / 2f;
                 if (ProcTryRegister(bds, cx, bFinCZ[b], pRW[k] / 2f, pRD[k] / 2f, kPad, bFinCorBdsIdx[b]))
                 { bHR[b] = true; bRNm[b] = pName[k]; bRW[b] = pRW[k]; bRD[b] = pRD[k]; bRX[b] = cx; roomsPlaced++; }
                 else
@@ -1540,6 +1533,8 @@ public class ShipLayoutGenerator : MonoBehaviour
         ConnectVent("VS_DockCap", 0f, vY, dockCapZ, 0f, vY, dockZ - hvW); ventSegs++;
         AddVentCap("VentCap_Dock", 0f, vY, dockCapZ);
         AddVentElbow("VElbow_Dock", 0f, vY, dockZ, false, false, true, true);
+        AddVentVertical("VDrop_Dock", 0f, dropY, dockZ, dropW, dropH, dropW);
+        CutCeilingForVent(dockGen, dropW, dropW);
 
         // --- Main spine trunk (DockingBay → Engineering front) ---
         float sv = dockZ + hvW; // leading edge of the next shaft segment
