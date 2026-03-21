@@ -881,11 +881,12 @@ public class ShipLayoutGenerator : MonoBehaviour
         float topH     = engH - doorH;
 
         // 1. Solid / vent-split wall segments between and outside openings.
-        //    Interior segments (between two openings) are split at the lateral vent
-        //    band so the vent trunk can pass through without clipping geometry.
-        //    Exterior segments (to the left of the first opening and to the right of
-        //    the last opening) have no vent running through them, so they are built
-        //    full-height to avoid visible gaps.
+        //    Interior segments (between two openings) are always split at the lateral
+        //    vent band so the vent trunk can pass through without clipping geometry.
+        //    Exterior segments are also split when the spine vent trunk (running at
+        //    X=0 with half-width hvWLocal) passes through their X-range.  This fixes
+        //    the single-branch case where the VJ_EngFr tee junction sits in an
+        //    exterior segment and would otherwise clip through a full-height wall.
         float prevEdge = -halfEngW;
         for (int i = 0; i <= openingXs.Length; i++)
         {
@@ -895,9 +896,12 @@ public class ShipLayoutGenerator : MonoBehaviour
             {
                 float cx       = prevEdge + sw / 2f;
                 bool  interior = (i > 0 && i < openingXs.Length);
-                if (interior)
+                // Exterior segments also need the vent gap when the spine trunk at X=0
+                // (±hvWLocal) runs through this segment's X range.
+                bool  ventPassesThroughSeg = (prevEdge < hvWLocal) && (segR > -hvWLocal);
+                if (interior || ventPassesThroughSeg)
                 {
-                    // Split at the vent band so the lateral vent shaft passes through
+                    // Split at the vent band so the vent shaft passes through without clipping
                     if (roomHeight > 0.01f)
                         MakeBoxOnParent(transform, "EngFWD_Bot_" + i,
                             new Vector3(cx, roomHeight / 2f, wallZ), sw, roomHeight, wallThickness);
@@ -907,7 +911,7 @@ public class ShipLayoutGenerator : MonoBehaviour
                 }
                 else
                 {
-                    // Exterior panel — no vent passes through, build full height
+                    // Exterior panel with no vent passage — build full height
                     MakeBoxOnParent(transform, "EngFWD_Seg_" + i,
                         new Vector3(cx, engH / 2f, wallZ), sw, engH, wallThickness);
                 }
@@ -1016,7 +1020,7 @@ public class ShipLayoutGenerator : MonoBehaviour
 
         // World-space AABB registry: (centerX, centerZ, halfW, halfD)
         var bds = new System.Collections.Generic.List<Vector4>();
-        int roomsPlaced = 0, roomsSkipped = 0, ventSegs = 0;
+        int roomsPlaced = 0, roomsSkipped = 0, ventSegs = 0, ventCutsMade = 0;
 
         // ════════════════════════════════════════════════════════
         //  PHASE 1 — SPINE TOPOLOGY
@@ -1093,6 +1097,16 @@ public class ShipLayoutGenerator : MonoBehaviour
         else
         { bX[0] = -(engW / 3f); bX[1] = 0f; bX[2] = engW / 3f; }
 
+        // Incremental branch-corridor AABB registry used only during Phase 1 geometry
+        // planning.  This list is SEPARATE from the main 'bds' list to avoid false
+        // positives: each branch's own straight corridor is added to branchSegBds AFTER
+        // the Z-shape check, so corner1 (which is adjacent to the straight corridor) is
+        // not incorrectly rejected when checking against the current branch's own geometry.
+        // Only previously-committed branches populate this list at check time.
+        var branchSegBds = new System.Collections.Generic.List<Vector4>();
+        const float kBranchSideLenStep = 0.5f;   // shrink step when clamping bSideLen
+        const float kBranchSideLenMinTol = 0.1f; // minimum viable sideLen above corridorWidth
+
         for (int b = 0; b < branchCount; b++)
         {
             bPat[b]     = rng.Next(2);
@@ -1103,39 +1117,77 @@ public class ShipLayoutGenerator : MonoBehaviour
                         : bX[b] >  0.1f ? +1
                         : (rng.Next(2) == 0 ? -1 : +1);
 
-            // Clamp bSideLen so this branch's Z-shaped side corridor doesn't overlap
-            // a neighbouring branch's geometry.  We check both the nearest neighbour
-            // on the side we're heading toward AND the engineering bay edge, so even
-            // outer branches (which have no neighbour in their direction) cannot
-            // extend past a safe limit.
-            if (branchCount >= 2 && bPat[b] == 1)
+            float strFr = engFr + bStrLen[b];
+
+            // ── AABB-based Z-shape fit check ────────────────────────────────
+            // The old formula-based bSideLen clamp did not account for the full
+            // Z-shape footprint (corner1 + side + corner2 + final corridor) and
+            // produced real geometry overlaps between branches.
+            //
+            // Strategy:
+            //   1. Check the CURRENT branch's Z-shape segments against all
+            //      PREVIOUSLY committed branch corridors (branchSegBds).
+            //      We check BEFORE adding this branch's own straight corridor,
+            //      so there is no false-positive from the corner1/straight seam.
+            //   2. If the default bSideLen causes overlap, shrink it in 0.5 m
+            //      steps until it fits or becomes too small.
+            //   3. If no valid length exists, fall back to straight pattern
+            //      (bPat = 0) so the layout is always playable.
+            // ────────────────────────────────────────────────────────────────
+            if (bPat[b] == 1)
             {
-                // Nearest neighbour gap on our extension side
-                float limit = float.MaxValue;
-                for (int other = 0; other < branchCount; other++)
+                bool gl = bSideDir[b] == -1;
+                float testSideLen = bSideLen[b];
+                bool  foundFit    = false;
+
+                while (testSideLen >= corridorWidth + kBranchSideLenMinTol)
                 {
-                    if (other == b) continue;
-                    float dist = Mathf.Abs(bX[b] - bX[other]);
-                    bool relevant = (bSideDir[b] == -1 && bX[other] < bX[b]) ||
-                                    (bSideDir[b] == +1 && bX[other] > bX[b]);
-                    if (relevant && dist < limit)
-                        limit = dist;
+                    float tCor1Z  = strFr + HalfCor;
+                    float tCor2X  = gl ? bX[b] - testSideLen - corridorWidth
+                                       : bX[b] + testSideLen + corridorWidth;
+                    float tFinCZ  = tCor1Z + HalfCor + bFinLen[b] / 2f;
+                    float tSideCX = gl ? bX[b] - HalfCor - testSideLen / 2f
+                                       : bX[b] + HalfCor + testSideLen / 2f;
+
+                    bool overlap =
+                        BoundsOverlap(branchSegBds, bX[b],    tCor1Z, corridorWidth / 2f, corridorWidth / 2f, kPad) ||
+                        BoundsOverlap(branchSegBds, tSideCX,  tCor1Z, testSideLen / 2f,   corridorWidth / 2f, kPad) ||
+                        BoundsOverlap(branchSegBds, tCor2X,   tCor1Z, corridorWidth / 2f, corridorWidth / 2f, kPad) ||
+                        BoundsOverlap(branchSegBds, tCor2X,   tFinCZ, corridorWidth / 2f, bFinLen[b] / 2f,   kPad);
+
+                    if (!overlap)
+                    {
+                        foundFit = true;
+                        if (testSideLen < bSideLen[b] - 0.01f)
+                            Debug.Log(string.Format(
+                                "[ProcGen:AI] Branch {0} Z-shape: bSideLen clamped from {1:F1}m → {2:F1}m to avoid overlap with previous branch corridors.",
+                                b, bSideLen[b], testSideLen));
+                        bSideLen[b] = testSideLen;
+                        break;
+                    }
+                    testSideLen -= kBranchSideLenStep;
                 }
-                // Distance from this branch origin to the engineering wall edge
-                float engEdgeDist = (bSideDir[b] == -1)
-                    ? (bX[b] + engW / 2f)
-                    : (engW / 2f - bX[b]);
-                // Allow at most half the neighbour gap (minus one corridor-width
-                // clearance) OR the engineering edge plus a generous room margin.
-                float maxSideLen = Mathf.Min(
-                    limit < float.MaxValue ? limit / 2f - corridorWidth : float.MaxValue,
-                    engEdgeDist + 8f
-                ) - corridorWidth;
-                if (bSideLen[b] > maxSideLen)
-                    bSideLen[b] = Mathf.Max(corridorWidth, maxSideLen);
+
+                if (!foundFit)
+                {
+                    bPat[b] = 0;
+                    Debug.Log(string.Format(
+                        "[ProcGen:AI] Branch {0}: Z-shape can't fit without overlap even at min sideLen — falling back to straight pattern.",
+                        b));
+                }
+                else
+                {
+                    Debug.Log(string.Format(
+                        "[ProcGen:AI] Branch {0}: Z-shape accepted, sideLen={1:F1}m dir={2}.",
+                        b, bSideLen[b], bSideDir[b] == -1 ? "left" : "right"));
+                }
+            }
+            else
+            {
+                Debug.Log(string.Format("[ProcGen:AI] Branch {0}: straight pattern chosen.", b));
             }
 
-            float strFr = engFr + bStrLen[b];
+            // Commit geometry for this branch
             if (bPat[b] == 0)
             {
                 bTermBk[b] = strFr;
@@ -1143,15 +1195,28 @@ public class ShipLayoutGenerator : MonoBehaviour
             }
             else
             {
+                bool gl    = bSideDir[b] == -1;
                 bCor1Z[b]  = strFr + HalfCor;
-                bCor2X[b]  = bSideDir[b] == -1
-                    ? bX[b] - bSideLen[b] - corridorWidth
-                    : bX[b] + bSideLen[b] + corridorWidth;
+                bCor2X[b]  = gl ? bX[b] - bSideLen[b] - corridorWidth
+                                : bX[b] + bSideLen[b] + corridorWidth;
                 bFinBk[b]  = bCor1Z[b] + HalfCor;
                 bFinCZ[b]  = bFinBk[b] + bFinLen[b] / 2f;
                 bTermBk[b] = bFinBk[b] + bFinLen[b];
                 bTermX[b]  = bCor2X[b];
+
+                // Register all Z-shape corridor segments so subsequent branches
+                // can check against them.
+                float sCXb = gl ? bX[b] - HalfCor - bSideLen[b] / 2f
+                                : bX[b] + HalfCor + bSideLen[b] / 2f;
+                branchSegBds.Add(new Vector4(bX[b],     bCor1Z[b], corridorWidth / 2f, corridorWidth / 2f)); // C1
+                branchSegBds.Add(new Vector4(sCXb,      bCor1Z[b], bSideLen[b] / 2f,   corridorWidth / 2f)); // Side
+                branchSegBds.Add(new Vector4(bCor2X[b], bCor1Z[b], corridorWidth / 2f, corridorWidth / 2f)); // C2
+                branchSegBds.Add(new Vector4(bCor2X[b], bFinCZ[b], corridorWidth / 2f, bFinLen[b] / 2f));    // Fin
             }
+
+            // Always register the straight corridor for subsequent branches.
+            float strCZ_b = engFr + bStrLen[b] / 2f;
+            branchSegBds.Add(new Vector4(bX[b], strCZ_b, corridorWidth / 2f, bStrLen[b] / 2f));
         }
 
         // Room pool (Fisher-Yates shuffle for reproducibility)
@@ -1242,11 +1307,14 @@ public class ShipLayoutGenerator : MonoBehaviour
                     else
                     { sHR[i] = true; sRNm[i] = pName[k]; sRW[i] = fw; sRD[i] = fd; sRX[i] = fcx; }
                     roomsPlaced++;
+                    Debug.Log(string.Format("[ProcGen:AI] Spine[{0}] placed '{1}' on {2} side (w={3:F1} d={4:F1}).",
+                        i, pName[k], fLeft ? "left" : "right", fw, fd));
                 }
                 else
                 {
                     Debug.LogWarning("[ProcGen] All placement attempts failed for " +
                         pName[k] + " at spine[" + i + "]. Skipping cleanly.");
+                    Debug.Log(string.Format("[ProcGen:AI] Spine[{0}] '{1}' skipped — no valid position found after 6 attempts.", i, pName[k]));
                     roomsSkipped++; pp++;
                 }
             }
@@ -1275,12 +1343,15 @@ public class ShipLayoutGenerator : MonoBehaviour
                         else
                         { sHR[i] = true; sRNm[i] = pName[k]; sRW[i] = rW2; sRD[i] = rD2; sRX[i] = cx2; }
                         roomsPlaced++; placed2 = true;
+                        Debug.Log(string.Format("[ProcGen:AI] Spine[{0}] placed '{1}' on {2} side attempt {3} (w={4:F1} d={5:F1}).",
+                            i, pName[k], needLeft ? "left" : "right", mi2, rW2, rD2));
                     }
                 }
                 if (!placed2)
                 {
                     Debug.LogWarning("[ProcGen] All placement attempts failed for " +
                         pName[k] + " at spine[" + i + "] (second side). Skipping cleanly.");
+                    Debug.Log(string.Format("[ProcGen:AI] Spine[{0}] '{1}' (second side) skipped — no valid position.", i, pName[k]));
                     roomsSkipped++; pp++;
                 }
             }
@@ -1301,10 +1372,12 @@ public class ShipLayoutGenerator : MonoBehaviour
                 engHR = true; reactNm = pName[k];
                 reactW_ = pRW[k]; reactD_ = pRD[k]; reactX = cx;
                 roomsPlaced++;
+                Debug.Log(string.Format("[ProcGen:AI] Eng-Right placed '{0}' (w={1:F1} d={2:F1}).", pName[k], pRW[k], pRD[k]));
             }
             else
             {
                 Debug.LogWarning("[ProcGen] " + pName[k] + "_EngR overlaps — skipping.");
+                Debug.Log(string.Format("[ProcGen:AI] Eng-Right '{0}' skipped — overlaps engineering hub.", pName[k]));
                 roomsSkipped++;
             }
         }
@@ -1318,10 +1391,12 @@ public class ShipLayoutGenerator : MonoBehaviour
                 engHL = true; labNm = pName[k];
                 labW_ = pRW[k]; labD_ = pRD[k]; labX = cx;
                 roomsPlaced++;
+                Debug.Log(string.Format("[ProcGen:AI] Eng-Left placed '{0}' (w={1:F1} d={2:F1}).", pName[k], pRW[k], pRD[k]));
             }
             else
             {
                 Debug.LogWarning("[ProcGen] " + pName[k] + "_EngL overlaps — skipping.");
+                Debug.Log(string.Format("[ProcGen:AI] Eng-Left '{0}' skipped — overlaps engineering hub.", pName[k]));
                 roomsSkipped++;
             }
         }
@@ -1353,11 +1428,16 @@ public class ShipLayoutGenerator : MonoBehaviour
             // Z-shaped branch → bFinCorBdsIdx (the final leg corridor).
             int termParentCorBdsIdx = (bPat[b] == 1) ? bFinCorBdsIdx[b] : bStrCorBdsIdx[b];
             if (ProcTryRegister(bds, bTermX[b], bTermCZ[b], bTermW[b] / 2f, bTermD[b] / 2f, kPad, termParentCorBdsIdx))
-            { bTermExists[b] = true; roomsPlaced++; }
+            {
+                bTermExists[b] = true; roomsPlaced++;
+                Debug.Log(string.Format("[ProcGen:AI] Branch {0} terminal '{1}' placed (w={2:F1} d={3:F1} pat={4}).",
+                    b, bTermNm[b], bTermW[b], bTermD[b], bPat[b] == 0 ? "straight" : "Z-shape"));
+            }
             else
             {
                 Debug.LogWarning("[ProcGen] Terminal " + bTermNm[b] +
                     " (branch " + b + ") overlaps — skipping. Corridor will be capped.");
+                Debug.Log(string.Format("[ProcGen:AI] Branch {0} terminal '{1}' skipped — overlaps existing geometry. Corridor will be capped.", b, bTermNm[b]));
                 roomsSkipped++;
             }
         }
@@ -1377,18 +1457,32 @@ public class ShipLayoutGenerator : MonoBehaviour
                 int k = pidx[pp]; pp++;
                 float cx = bCor2X[b] - HalfCor - pRW[k] / 2f;
                 if (ProcTryRegister(bds, cx, bFinCZ[b], pRW[k] / 2f, pRD[k] / 2f, kPad, bFinCorBdsIdx[b]))
-                { bHL[b] = true; bLNm[b] = pName[k]; bLW[b] = pRW[k]; bLD[b] = pRD[k]; bLX[b] = cx; roomsPlaced++; }
+                {
+                    bHL[b] = true; bLNm[b] = pName[k]; bLW[b] = pRW[k]; bLD[b] = pRD[k]; bLX[b] = cx; roomsPlaced++;
+                    Debug.Log(string.Format("[ProcGen:AI] Branch {0} fin-left '{1}' placed.", b, pName[k]));
+                }
                 else
-                { Debug.LogWarning("[ProcGen] " + pName[k] + "_BL" + b + " overlaps — skipping."); roomsSkipped++; }
+                {
+                    Debug.LogWarning("[ProcGen] " + pName[k] + "_BL" + b + " overlaps — skipping.");
+                    Debug.Log(string.Format("[ProcGen:AI] Branch {0} fin-left '{1}' skipped — overlaps existing geometry.", b, pName[k]));
+                    roomsSkipped++;
+                }
             }
             if (pp < poolSize && rng.NextDouble() > 0.4f)
             {
                 int k = pidx[pp]; pp++;
                 float cx = bCor2X[b] + HalfCor + pRW[k] / 2f;
                 if (ProcTryRegister(bds, cx, bFinCZ[b], pRW[k] / 2f, pRD[k] / 2f, kPad, bFinCorBdsIdx[b]))
-                { bHR[b] = true; bRNm[b] = pName[k]; bRW[b] = pRW[k]; bRD[b] = pRD[k]; bRX[b] = cx; roomsPlaced++; }
+                {
+                    bHR[b] = true; bRNm[b] = pName[k]; bRW[b] = pRW[k]; bRD[b] = pRD[k]; bRX[b] = cx; roomsPlaced++;
+                    Debug.Log(string.Format("[ProcGen:AI] Branch {0} fin-right '{1}' placed.", b, pName[k]));
+                }
                 else
-                { Debug.LogWarning("[ProcGen] " + pName[k] + "_BR" + b + " overlaps — skipping."); roomsSkipped++; }
+                {
+                    Debug.LogWarning("[ProcGen] " + pName[k] + "_BR" + b + " overlaps — skipping.");
+                    Debug.Log(string.Format("[ProcGen:AI] Branch {0} fin-right '{1}' skipped — overlaps existing geometry.", b, pName[k]));
+                    roomsSkipped++;
+                }
             }
         }
 
@@ -1622,7 +1716,7 @@ public class ShipLayoutGenerator : MonoBehaviour
         AddVentCap("VentCap_Dock", 0f, vY, dockCapZ);
         AddVentElbow("VElbow_Dock", 0f, vY, dockZ, false, false, true, true);
         AddVentVertical("VDrop_Dock", 0f, dropY, dockZ, dropW, dropH, dropW);
-        CutCeilingForVent(dockGen, dropW, dropW);
+        CutCeilingForVent(dockGen, dropW, dropW); ventCutsMade++;
 
         // --- Main spine trunk (DockingBay → Engineering front) ---
         float sv = dockZ + hvW; // leading edge of the next shaft segment
@@ -1643,14 +1737,14 @@ public class ShipLayoutGenerator : MonoBehaviour
                     ConnectVent("VB_SL" + i, -hvW, vY, sCZ[i], sLX[i] + hvW, vY, sCZ[i]); ventSegs++;
                     AddVentElbow("VElbow_SL" + i, sLX[i], vY, sCZ[i], true, true, true, false);
                     AddVentVertical("VDrop_SL" + i, sLX[i], dropY, sCZ[i], dropW, dropH, dropW);
-                    CutCeilingForVent(sLGen[i], dropW, dropW);
+                    CutCeilingForVent(sLGen[i], dropW, dropW); ventCutsMade++;
                 }
                 if (sHR[i])
                 {
                     ConnectVent("VB_SR" + i, hvW, vY, sCZ[i], sRX[i] - hvW, vY, sCZ[i]); ventSegs++;
                     AddVentElbow("VElbow_SR" + i, sRX[i], vY, sCZ[i], true, true, false, true);
                     AddVentVertical("VDrop_SR" + i, sRX[i], dropY, sCZ[i], dropW, dropH, dropW);
-                    CutCeilingForVent(sRGen[i], dropW, dropW);
+                    CutCeilingForVent(sRGen[i], dropW, dropW); ventCutsMade++;
                 }
             }
 
@@ -1677,14 +1771,14 @@ public class ShipLayoutGenerator : MonoBehaviour
                 ConnectVent("VB_React", hvW, vY, engCZ, reactX - hvW, vY, engCZ); ventSegs++;
                 AddVentElbow("VElbow_React", reactX, vY, engCZ, true, true, false, true);
                 AddVentVertical("VDrop_React", reactX, dropY, engCZ, dropW, dropH, dropW);
-                CutCeilingForVent(engReactGen, dropW, dropW);
+                CutCeilingForVent(engReactGen, dropW, dropW); ventCutsMade++;
             }
             if (engHL)
             {
                 ConnectVent("VB_Lab", -hvW, vY, engCZ, labX + hvW, vY, engCZ); ventSegs++;
                 AddVentElbow("VElbow_Lab", labX, vY, engCZ, true, true, true, false);
                 AddVentVertical("VDrop_Lab", labX, dropY, engCZ, dropW, dropH, dropW);
-                CutCeilingForVent(engLabGen, dropW, dropW);
+                CutCeilingForVent(engLabGen, dropW, dropW); ventCutsMade++;
             }
         }
 
@@ -1742,7 +1836,7 @@ public class ShipLayoutGenerator : MonoBehaviour
                     ConnectVent("VB" + b + "_Run", bTermX[b], vY, bTermCZ[b] + hvW, bTermX[b], vY, termDeep); ventSegs++;
                     AddVentCap("VentCap_Term" + b, bTermX[b], vY, termDeep);
                     AddVentVertical("VDrop_Term" + b, bTermX[b], dropY, bTermCZ[b], dropW, dropH, dropW);
-                    CutCeilingForVent(termGen[b], dropW, dropW);
+                    CutCeilingForVent(termGen[b], dropW, dropW); ventCutsMade++;
                 }
                 else
                     AddVentCap("VentCap_Term" + b, bTermX[b], vY, termVentEndZ);
@@ -1784,14 +1878,14 @@ public class ShipLayoutGenerator : MonoBehaviour
                         ConnectVent("VBL" + b, bCor2X[b] - hvW, vY, bFinCZ[b], bLX[b] + hvW, vY, bFinCZ[b]); ventSegs++;
                         AddVentElbow("VElbow_BL" + b, bLX[b], vY, bFinCZ[b], true, true, true, false);
                         AddVentVertical("VDrop_BL" + b, bLX[b], dropY, bFinCZ[b], dropW, dropH, dropW);
-                        CutCeilingForVent(bLGen[b], dropW, dropW);
+                        CutCeilingForVent(bLGen[b], dropW, dropW); ventCutsMade++;
                     }
                     if (bHR[b])
                     {
                         ConnectVent("VBR" + b, bCor2X[b] + hvW, vY, bFinCZ[b], bRX[b] - hvW, vY, bFinCZ[b]); ventSegs++;
                         AddVentElbow("VElbow_BR" + b, bRX[b], vY, bFinCZ[b], true, true, false, true);
                         AddVentVertical("VDrop_BR" + b, bRX[b], dropY, bFinCZ[b], dropW, dropH, dropW);
-                        CutCeilingForVent(bRGen[b], dropW, dropW);
+                        CutCeilingForVent(bRGen[b], dropW, dropW); ventCutsMade++;
                     }
                     ConnectVent("VB" + b + "_Fin2", bCor2X[b], vY, bFinCZ[b] + hvW, bCor2X[b], vY, termVentEndZ); ventSegs++;
                 }
@@ -1806,7 +1900,7 @@ public class ShipLayoutGenerator : MonoBehaviour
                     ConnectVent("VB" + b + "_Run", bCor2X[b], vY, bTermCZ[b] + hvW, bCor2X[b], vY, termDeep); ventSegs++;
                     AddVentCap("VentCap_Term" + b, bCor2X[b], vY, termDeep);
                     AddVentVertical("VDrop_Term" + b, bCor2X[b], dropY, bTermCZ[b], dropW, dropH, dropW);
-                    CutCeilingForVent(termGen[b], dropW, dropW);
+                    CutCeilingForVent(termGen[b], dropW, dropW); ventCutsMade++;
                 }
                 else
                     AddVentCap("VentCap_Term" + b, bCor2X[b], vY, termVentEndZ);
@@ -2179,12 +2273,12 @@ public class ShipLayoutGenerator : MonoBehaviour
             "[ProcGen] Ship ready! Seed={0} | Spine={1} corridors | CargoBay after cor{2} | " +
             "Branches={3} (bridge on branch {4}) | " +
             "Rooms: {5} placed / {6} skipped | " +
-            "Vent segments={7} | Ceiling seals applied={8} | " +
-            "Diagnostics: {9} overlaps, {10} gaps, {11} corridor intersections",
+            "Vent segments={7} | Vent ceiling cuts={8} | Fallback ceiling seals={9} | " +
+            "Diagnostics: {10} overlaps, {11} gaps, {12} corridor intersections",
             actualSeed, spineCount, cargoAfterIdx - 1,
             branchCount, bridgeBranch,
             roomsPlaced, roomsSkipped,
-            ventSegs, ceilFixes,
+            ventSegs, ventCutsMade, ceilFixes,
             overlapCount, gapCount, corridorOverlaps));
     }
 }
