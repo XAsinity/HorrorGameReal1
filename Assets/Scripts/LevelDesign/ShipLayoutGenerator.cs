@@ -26,6 +26,11 @@ public class ShipLayoutGenerator : MonoBehaviour
     private const float kDoorWidth = 1.4f;
     private const float kDoorHeight = 2.4f;
 
+    // Auto-retry state — _procRetries is reset to 0 at the end of each successful (or exhausted)
+    // generation.  _procBaseSeed is set once on the first attempt and reused for all retries.
+    private int _procRetries = 0;
+    private int _procBaseSeed = 0;
+
     [ContextMenu("Generate Ship Layout")]
     public void GenerateShipLayout()
     {
@@ -659,6 +664,11 @@ public class ShipLayoutGenerator : MonoBehaviour
 
     private void CutCeilingForVent(ShipModuleGenerator roomGen, float holeW, float holeD)
     {
+        if (roomGen == null)
+        {
+            Debug.LogWarning("[ProcGen] CutCeilingForVent: null roomGen — skipping ceiling cut.");
+            return;
+        }
         DeleteChildWall(roomGen, "Ceiling");
 
         float w = roomGen.width;
@@ -980,9 +990,15 @@ public class ShipLayoutGenerator : MonoBehaviour
     // ═══════════════════════════════════════════════════════════════
     private void GenerateProceduralLayout()
     {
-        int actualSeed = seed < 0 ? System.Environment.TickCount : seed;
+        // On the first attempt capture the base seed; on retries mutate it via an LCG step.
+        if (_procRetries == 0)
+            _procBaseSeed = seed < 0 ? System.Environment.TickCount : seed;
+        int actualSeed = _procBaseSeed;
+        for (int i = 0; i < _procRetries; i++)
+            actualSeed = (int)(unchecked((long)actualSeed * 6364136223846793005L + 1442695040888963407L) & 0x7FFFFFFF);
         System.Random rng = new System.Random(actualSeed);
-        Debug.Log("[ProcGen] Starting intelligent layout generation. Seed=" + actualSeed);
+        Debug.Log("[ProcGen] Starting intelligent layout generation. Seed=" + actualSeed +
+            (_procRetries > 0 ? " (retry " + _procRetries + ")" : ""));
 
         // AABB overlap safety margin.  0.05 is intentionally small: side rooms are
         // designed to abut (slightly overlap) their parent corridor wall for proper
@@ -1439,6 +1455,7 @@ public class ShipLayoutGenerator : MonoBehaviour
 
         // Engineering optional side rooms
         ShipModuleGenerator engReactGen = null, engLabGen = null;
+        float engVTop = vY + ventH;
         if (engHR)
         {
             DeleteChildWall(engGen, "Wall_Right");
@@ -1448,6 +1465,19 @@ public class ShipLayoutGenerator : MonoBehaviour
             engReactGen = AddRoom(reactNm + "_EngR", reactX, engCZ, reactW_, roomHeight, reactD_);
             DeleteChildWall(engReactGen, "Wall_Left");
         }
+        else
+        {
+            // No reactor room — replace solid Wall_Right with a vent-channel version
+            // so the vent band at vY is consistent across all engineering hub walls.
+            DeleteChildWall(engGen, "Wall_Right");
+            float wrX = engW / 2f - wallThickness / 2f;
+            if (vY > 0.01f)
+                MakeBoxOnParent(transform, "EngHub_WR_Bot",
+                    new Vector3(wrX, vY / 2f, engCZ), wallThickness, vY, engD);
+            if (engH - engVTop > 0.01f)
+                MakeBoxOnParent(transform, "EngHub_WR_Top",
+                    new Vector3(wrX, engVTop + (engH - engVTop) / 2f, engCZ), wallThickness, engH - engVTop, engD);
+        }
         if (engHL)
         {
             DeleteChildWall(engGen, "Wall_Left");
@@ -1456,6 +1486,18 @@ public class ShipLayoutGenerator : MonoBehaviour
                 engH, dH, vY);
             engLabGen = AddRoom(labNm + "_EngL", labX, engCZ, labW_, roomHeight, labD_);
             DeleteChildWall(engLabGen, "Wall_Right");
+        }
+        else
+        {
+            // No lab room — replace solid Wall_Left with a vent-channel version.
+            DeleteChildWall(engGen, "Wall_Left");
+            float wlX = -(engW / 2f - wallThickness / 2f);
+            if (vY > 0.01f)
+                MakeBoxOnParent(transform, "EngHub_WL_Bot",
+                    new Vector3(wlX, vY / 2f, engCZ), wallThickness, vY, engD);
+            if (engH - engVTop > 0.01f)
+                MakeBoxOnParent(transform, "EngHub_WL_Top",
+                    new Vector3(wlX, engVTop + (engH - engVTop) / 2f, engCZ), wallThickness, engH - engVTop, engD);
         }
 
         // --- Fork branches ---
@@ -1954,31 +1996,44 @@ public class ShipLayoutGenerator : MonoBehaviour
         //  so they appear in the Unity console without breaking generation.
         // ════════════════════════════════════════════════════════════════
 
-        // --- Overlap Detection ---
-        var allBounds = new System.Collections.Generic.List<(string name, Bounds bounds)>();
+        // --- Overlap Detection (cross-module only) ---
+        //  Compute a combined bounding box per top-level module child, then
+        //  compare module pairs.  Same-module internal pieces (Floor↔Wall,
+        //  Wall↔Ceiling corner seams) are intentional and never flagged.
+        //  Only cross-module overlaps above 0.5 m³ are considered real issues.
+        var modBounds = new System.Collections.Generic.List<(string name, Bounds bounds)>();
         for (int i = 0; i < transform.childCount; i++)
-            CollectBoundsRecursive(transform.GetChild(i), allBounds);
+        {
+            Transform child = transform.GetChild(i);
+            Renderer[] rends = child.GetComponentsInChildren<Renderer>();
+            if (rends.Length == 0) continue;
+            Bounds combined = rends[0].bounds;
+            for (int r = 1; r < rends.Length; r++) combined.Encapsulate(rends[r].bounds);
+            modBounds.Add((child.name, combined));
+        }
 
         int overlapCount = 0;
-        for (int i = 0; i < allBounds.Count; i++)
+        for (int i = 0; i < modBounds.Count; i++)
         {
-            for (int j = i + 1; j < allBounds.Count; j++)
+            for (int j = i + 1; j < modBounds.Count; j++)
             {
-                if (allBounds[i].bounds.Intersects(allBounds[j].bounds))
+                if (!modBounds[i].bounds.Intersects(modBounds[j].bounds)) continue;
+                Bounds bA = modBounds[i].bounds, bB = modBounds[j].bounds;
+                float ox = Mathf.Max(0, Mathf.Min(bA.max.x, bB.max.x) - Mathf.Max(bA.min.x, bB.min.x));
+                float oy = Mathf.Max(0, Mathf.Min(bA.max.y, bB.max.y) - Mathf.Max(bA.min.y, bB.min.y));
+                float oz = Mathf.Max(0, Mathf.Min(bA.max.z, bB.max.z) - Mathf.Max(bA.min.z, bB.min.z));
+                float vol = ox * oy * oz;
+                // 0.5 m³ threshold: adjacent modules (room touching a corridor) touch at a
+                // shared wall face and produce near-zero AABB overlap (< 0.01 m³) because
+                // rooms are placed at x = ±(HalfCor + W/2) so their outer edges align exactly
+                // with the corridor face.  A genuine cross-module penetration (e.g. two branch
+                // corridors passing through each other) produces much larger volumes.
+                if (vol > 0.5f)
                 {
-                    Bounds boundsA = allBounds[i].bounds;
-                    Bounds boundsB = allBounds[j].bounds;
-                    float ox = Mathf.Max(0, Mathf.Min(boundsA.max.x, boundsB.max.x) - Mathf.Max(boundsA.min.x, boundsB.min.x));
-                    float oy = Mathf.Max(0, Mathf.Min(boundsA.max.y, boundsB.max.y) - Mathf.Max(boundsA.min.y, boundsB.min.y));
-                    float oz = Mathf.Max(0, Mathf.Min(boundsA.max.z, boundsB.max.z) - Mathf.Max(boundsA.min.z, boundsB.min.z));
-                    float vol = ox * oy * oz;
-                    if (vol > 0.1f)
-                    {
-                        overlapCount++;
-                        Debug.LogWarning(string.Format(
-                            "[ProcGen:Diag] OVERLAP: '{0}' and '{1}' intersect (volume={2:F2}m³)",
-                            allBounds[i].name, allBounds[j].name, vol));
-                    }
+                    overlapCount++;
+                    Debug.LogWarning(string.Format(
+                        "[ProcGen:Diag] OVERLAP: '{0}' and '{1}' intersect (volume={2:F2}m³)",
+                        modBounds[i].name, modBounds[j].name, vol));
                 }
             }
         }
@@ -2059,10 +2114,39 @@ public class ShipLayoutGenerator : MonoBehaviour
 
         if (overlapCount > 0 || gapCount > 0 || corridorOverlaps > 0)
             Debug.LogError(string.Format(
-                "[ProcGen:Diag] LAYOUT ISSUES DETECTED — {0} overlaps, {1} gaps, {2} corridor intersections. Consider regenerating with a different seed.",
+                "[ProcGen:Diag] LAYOUT ISSUES DETECTED — {0} overlaps, {1} gaps, {2} corridor intersections.",
                 overlapCount, gapCount, corridorOverlaps));
         else
             Debug.Log("[ProcGen:Diag] Layout validation passed — no overlaps or gaps detected.");
+
+        // ════════════════════════════════════════════════════════════════
+        //  AUTO-RETRY — if the layout is too broken (no rooms placed, or
+        //  far too many skipped, or real corridor intersections detected),
+        //  clear the generated geometry, mutate the seed and try again.
+        //  Players cannot change the seed at runtime, so the generator
+        //  must self-correct.  Cap at 5 retries to avoid infinite loops.
+        // ════════════════════════════════════════════════════════════════
+        bool tooBroken = (roomsPlaced == 0) ||
+                         (roomsSkipped > roomsPlaced * 2 && roomsSkipped > 3) ||
+                         (corridorOverlaps > 0);
+        const int maxRetries = 5;
+        if (tooBroken && _procRetries < maxRetries)
+        {
+            Debug.LogWarning(string.Format(
+                "[ProcGen] Layout quality too low ({0} rooms placed, {1} skipped). Auto-retrying with mutated seed...",
+                roomsPlaced, roomsSkipped));
+            for (int i = transform.childCount - 1; i >= 0; i--)
+            {
+                if (Application.isPlaying) Destroy(transform.GetChild(i).gameObject);
+                else DestroyImmediate(transform.GetChild(i).gameObject);
+            }
+            _procRetries++;
+            GenerateProceduralLayout();
+            return;
+        }
+        if (tooBroken)
+            Debug.LogWarning("[ProcGen] Exhausted " + maxRetries + " retries. Using last generated layout.");
+        _procRetries = 0;
 
         Debug.Log(string.Format(
             "[ProcGen] Ship ready! Seed={0} | Spine={1} corridors | CargoBay after cor{2} | " +
@@ -2075,18 +2159,5 @@ public class ShipLayoutGenerator : MonoBehaviour
             roomsPlaced, roomsSkipped,
             ventSegs, ceilFixes,
             overlapCount, gapCount, corridorOverlaps));
-    }
-
-    // ─────────────────────────────────────────────────────────────────────
-    //  Helper: recursively collect Renderer bounds from a transform tree.
-    // ─────────────────────────────────────────────────────────────────────
-    private void CollectBoundsRecursive(Transform t,
-        System.Collections.Generic.List<(string, Bounds)> list)
-    {
-        Renderer rend = t.GetComponent<Renderer>();
-        if (rend != null)
-            list.Add((t.name, rend.bounds));
-        for (int i = 0; i < t.childCount; i++)
-            CollectBoundsRecursive(t.GetChild(i), list);
     }
 }
