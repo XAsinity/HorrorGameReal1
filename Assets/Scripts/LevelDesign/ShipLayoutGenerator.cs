@@ -910,19 +910,19 @@ public class ShipLayoutGenerator : MonoBehaviour
                     if (belowH > 0.01f)
                     {
                         MakeBoxOnParent(transform, "EngFWD_DTS_LBot_" + i,
-                            new Vector3(bx - hOp - sideW / 2f, doorH + belowH / 2f, wallZ),
+                            new Vector3(bx - hvWLocal - sideW / 2f, doorH + belowH / 2f, wallZ),
                             sideW, belowH, wallThickness);
                         MakeBoxOnParent(transform, "EngFWD_DTS_RBot_" + i,
-                            new Vector3(bx + hOp + sideW / 2f, doorH + belowH / 2f, wallZ),
+                            new Vector3(bx + hvWLocal + sideW / 2f, doorH + belowH / 2f, wallZ),
                             sideW, belowH, wallThickness);
                     }
                     if (aboveH > 0.01f)
                     {
                         MakeBoxOnParent(transform, "EngFWD_DTS_LTop_" + i,
-                            new Vector3(bx - hOp - sideW / 2f, vTop + aboveH / 2f, wallZ),
+                            new Vector3(bx - hvWLocal - sideW / 2f, vTop + aboveH / 2f, wallZ),
                             sideW, aboveH, wallThickness);
                         MakeBoxOnParent(transform, "EngFWD_DTS_RTop_" + i,
-                            new Vector3(bx + hOp + sideW / 2f, vTop + aboveH / 2f, wallZ),
+                            new Vector3(bx + hvWLocal + sideW / 2f, vTop + aboveH / 2f, wallZ),
                             sideW, aboveH, wallThickness);
                     }
                 }
