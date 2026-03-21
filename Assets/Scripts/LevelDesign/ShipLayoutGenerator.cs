@@ -1075,6 +1075,25 @@ public class ShipLayoutGenerator : MonoBehaviour
                         : bX[b] >  0.1f ? +1
                         : (rng.Next(2) == 0 ? -1 : +1);
 
+            // Clamp bSideLen so this branch's final corridor doesn't cross into a
+            // neighboring branch's lane. For each neighbor on the side we're heading
+            // toward, allow at most half the gap between the two branch X origins,
+            // minus a full corridor-width safety margin.
+            if (branchCount >= 2)
+            {
+                float maxReach = float.MaxValue;
+                for (int other = 0; other < branchCount; other++)
+                {
+                    if (other == b) continue;
+                    if (bSideDir[b] == -1 && bX[other] < bX[b])
+                        maxReach = Mathf.Min(maxReach, Mathf.Abs(bX[b] - bX[other]) / 2f - corridorWidth);
+                    else if (bSideDir[b] == +1 && bX[other] > bX[b])
+                        maxReach = Mathf.Min(maxReach, Mathf.Abs(bX[other] - bX[b]) / 2f - corridorWidth);
+                }
+                if (maxReach > corridorWidth && maxReach < bSideLen[b])
+                    bSideLen[b] = Mathf.Max(corridorWidth, maxReach);
+            }
+
             float strFr = engFr + bStrLen[b];
             if (bPat[b] == 0)
             {
@@ -1147,6 +1166,8 @@ public class ShipLayoutGenerator : MonoBehaviour
                 float sCXb = gl ? bX[b] - HalfCor - bSideLen[b] / 2f
                                 : bX[b] + HalfCor + bSideLen[b] / 2f;
                 bds.Add(new Vector4(sCXb, bCor1Z[b], bSideLen[b] / 2f, corridorWidth / 2f));
+                bds.Add(new Vector4(bX[b],    bCor1Z[b], corridorWidth / 2f, corridorWidth / 2f)); // corner1
+                bds.Add(new Vector4(bCor2X[b], bCor1Z[b], corridorWidth / 2f, corridorWidth / 2f)); // corner2
                 bFinCorBdsIdx[b] = bds.Count;
                 bds.Add(new Vector4(bCor2X[b], bFinCZ[b], corridorWidth / 2f, bFinLen[b] / 2f));
             }
