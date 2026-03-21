@@ -870,7 +870,12 @@ public class ShipLayoutGenerator : MonoBehaviour
         float vTop     = roomHeight + ventH;
         float topH     = engH - doorH;
 
-        // 1. Solid / vent-split wall segments between and outside openings
+        // 1. Solid / vent-split wall segments between and outside openings.
+        //    Interior segments (between two openings) are split at the lateral vent
+        //    band so the vent trunk can pass through without clipping geometry.
+        //    Exterior segments (to the left of the first opening and to the right of
+        //    the last opening) have no vent running through them, so they are built
+        //    full-height to avoid visible gaps.
         float prevEdge = -halfEngW;
         for (int i = 0; i <= openingXs.Length; i++)
         {
@@ -878,17 +883,24 @@ public class ShipLayoutGenerator : MonoBehaviour
             float sw   = segR - prevEdge;
             if (sw > 0.01f)
             {
-                float cx = prevEdge + sw / 2f;
-                // Lateral vent trunk runs along the full width of engineering at ceiling
-                // level (roomHeight..roomHeight+ventH).  ALL segments — exterior and
-                // interior alike — must be split at the vent band so the shaft passes
-                // through without clipping geometry.
-                if (roomHeight > 0.01f)
-                    MakeBoxOnParent(transform, "EngFWD_Bot_" + i,
-                        new Vector3(cx, roomHeight / 2f, wallZ), sw, roomHeight, wallThickness);
-                if (engH - vTop > 0.01f)
-                    MakeBoxOnParent(transform, "EngFWD_Top_" + i,
-                        new Vector3(cx, vTop + (engH - vTop) / 2f, wallZ), sw, engH - vTop, wallThickness);
+                float cx       = prevEdge + sw / 2f;
+                bool  interior = (i > 0 && i < openingXs.Length);
+                if (interior)
+                {
+                    // Split at the vent band so the lateral vent shaft passes through
+                    if (roomHeight > 0.01f)
+                        MakeBoxOnParent(transform, "EngFWD_Bot_" + i,
+                            new Vector3(cx, roomHeight / 2f, wallZ), sw, roomHeight, wallThickness);
+                    if (engH - vTop > 0.01f)
+                        MakeBoxOnParent(transform, "EngFWD_Top_" + i,
+                            new Vector3(cx, vTop + (engH - vTop) / 2f, wallZ), sw, engH - vTop, wallThickness);
+                }
+                else
+                {
+                    // Exterior panel — no vent passes through, build full height
+                    MakeBoxOnParent(transform, "EngFWD_Seg_" + i,
+                        new Vector3(cx, engH / 2f, wallZ), sw, engH, wallThickness);
+                }
             }
             if (i < openingXs.Length)
                 prevEdge = openingXs[i] + hOp;
@@ -1075,23 +1087,36 @@ public class ShipLayoutGenerator : MonoBehaviour
                         : bX[b] >  0.1f ? +1
                         : (rng.Next(2) == 0 ? -1 : +1);
 
-            // Clamp bSideLen so this branch's final corridor doesn't cross into a
-            // neighboring branch's lane. For each neighbor on the side we're heading
-            // toward, allow at most half the gap between the two branch X origins,
-            // minus a full corridor-width safety margin.
-            if (branchCount >= 2)
+            // Clamp bSideLen so this branch's Z-shaped side corridor doesn't overlap
+            // a neighbouring branch's geometry.  We check both the nearest neighbour
+            // on the side we're heading toward AND the engineering bay edge, so even
+            // outer branches (which have no neighbour in their direction) cannot
+            // extend past a safe limit.
+            if (branchCount >= 2 && bPat[b] == 1)
             {
-                float maxReach = float.MaxValue;
+                // Nearest neighbour gap on our extension side
+                float limit = float.MaxValue;
                 for (int other = 0; other < branchCount; other++)
                 {
                     if (other == b) continue;
-                    if (bSideDir[b] == -1 && bX[other] < bX[b])
-                        maxReach = Mathf.Min(maxReach, Mathf.Abs(bX[b] - bX[other]) / 2f - corridorWidth);
-                    else if (bSideDir[b] == +1 && bX[other] > bX[b])
-                        maxReach = Mathf.Min(maxReach, Mathf.Abs(bX[other] - bX[b]) / 2f - corridorWidth);
+                    float dist = Mathf.Abs(bX[b] - bX[other]);
+                    bool relevant = (bSideDir[b] == -1 && bX[other] < bX[b]) ||
+                                    (bSideDir[b] == +1 && bX[other] > bX[b]);
+                    if (relevant && dist < limit)
+                        limit = dist;
                 }
-                if (maxReach > corridorWidth && maxReach < bSideLen[b])
-                    bSideLen[b] = Mathf.Max(corridorWidth, maxReach);
+                // Distance from this branch origin to the engineering wall edge
+                float engEdgeDist = (bSideDir[b] == -1)
+                    ? (bX[b] + engW / 2f)
+                    : (engW / 2f - bX[b]);
+                // Allow at most half the neighbour gap (minus one corridor-width
+                // clearance) OR the engineering edge plus a generous room margin.
+                float maxSideLen = Mathf.Min(
+                    limit < float.MaxValue ? limit / 2f - corridorWidth : float.MaxValue,
+                    engEdgeDist + 8f
+                ) - corridorWidth;
+                if (bSideLen[b] > maxSideLen)
+                    bSideLen[b] = Mathf.Max(corridorWidth, maxSideLen);
             }
 
             float strFr = engFr + bStrLen[b];
@@ -1922,15 +1947,146 @@ public class ShipLayoutGenerator : MonoBehaviour
             }
         }
 
+        // ════════════════════════════════════════════════════════════════
+        //  PHASE 6b — OVERLAP & GAP DIAGNOSTICS
+        //  Scans all generated geometry for intersections and missing
+        //  wall coverage.  Reports issues as Debug.LogWarning/LogError
+        //  so they appear in the Unity console without breaking generation.
+        // ════════════════════════════════════════════════════════════════
+
+        // --- Overlap Detection ---
+        var allBounds = new System.Collections.Generic.List<(string name, Bounds bounds)>();
+        for (int i = 0; i < transform.childCount; i++)
+            CollectBoundsRecursive(transform.GetChild(i), allBounds);
+
+        int overlapCount = 0;
+        for (int i = 0; i < allBounds.Count; i++)
+        {
+            for (int j = i + 1; j < allBounds.Count; j++)
+            {
+                if (allBounds[i].bounds.Intersects(allBounds[j].bounds))
+                {
+                    Bounds boundsA = allBounds[i].bounds;
+                    Bounds boundsB = allBounds[j].bounds;
+                    float ox = Mathf.Max(0, Mathf.Min(boundsA.max.x, boundsB.max.x) - Mathf.Max(boundsA.min.x, boundsB.min.x));
+                    float oy = Mathf.Max(0, Mathf.Min(boundsA.max.y, boundsB.max.y) - Mathf.Max(boundsA.min.y, boundsB.min.y));
+                    float oz = Mathf.Max(0, Mathf.Min(boundsA.max.z, boundsB.max.z) - Mathf.Max(boundsA.min.z, boundsB.min.z));
+                    float vol = ox * oy * oz;
+                    if (vol > 0.1f)
+                    {
+                        overlapCount++;
+                        Debug.LogWarning(string.Format(
+                            "[ProcGen:Diag] OVERLAP: '{0}' and '{1}' intersect (volume={2:F2}m³)",
+                            allBounds[i].name, allBounds[j].name, vol));
+                    }
+                }
+            }
+        }
+
+        // --- Gap Detection (room wall coverage) ---
+        int gapCount = 0;
+        for (int i = 0; i < transform.childCount; i++)
+        {
+            Transform child = transform.GetChild(i);
+            ShipModuleGenerator roomModule = child.GetComponent<ShipModuleGenerator>();
+            if (roomModule == null || roomModule.moduleType != ShipModuleGenerator.ModuleType.Room) continue;
+
+            string roomPrefix = child.name.Split('_')[0];
+            string[] faceNames = { "Wall_Back", "Wall_Front", "Wall_Left", "Wall_Right", "Floor", "Ceiling" };
+            foreach (string face in faceNames)
+            {
+                bool found = false;
+                for (int j = 0; j < child.childCount; j++)
+                {
+                    string cn = child.GetChild(j).name;
+                    if (cn == face || cn.StartsWith(face + "_")) { found = true; break; }
+                }
+                if (!found)
+                {
+                    bool hasDoorReplacement = false;
+                    for (int j = 0; j < transform.childCount; j++)
+                    {
+                        string pn = transform.GetChild(j).name;
+                        if (pn.Contains("Door_") && pn.Contains(roomPrefix))
+                        { hasDoorReplacement = true; break; }
+                    }
+                    if (!hasDoorReplacement)
+                    {
+                        gapCount++;
+                        Debug.LogWarning(string.Format(
+                            "[ProcGen:Diag] GAP: Room '{0}' is missing '{1}' with no door replacement.",
+                            child.name, face));
+                    }
+                }
+            }
+        }
+
+        // --- Corridor-vs-corridor intersection check ---
+        int corridorOverlaps = 0;
+        var corridorBounds = new System.Collections.Generic.List<(string name, Bounds bounds)>();
+        for (int i = 0; i < transform.childCount; i++)
+        {
+            Transform child = transform.GetChild(i);
+            ShipModuleGenerator corridorModule = child.GetComponent<ShipModuleGenerator>();
+            if (corridorModule != null && corridorModule.moduleType == ShipModuleGenerator.ModuleType.Corridor)
+            {
+                Renderer rend = child.GetComponentInChildren<Renderer>();
+                if (rend != null)
+                    corridorBounds.Add((child.name, rend.bounds));
+            }
+        }
+        for (int i = 0; i < corridorBounds.Count; i++)
+        {
+            for (int j = i + 1; j < corridorBounds.Count; j++)
+            {
+                if (corridorBounds[i].bounds.Intersects(corridorBounds[j].bounds))
+                {
+                    Bounds boundsA = corridorBounds[i].bounds;
+                    Bounds boundsB = corridorBounds[j].bounds;
+                    float ox = Mathf.Max(0, Mathf.Min(boundsA.max.x, boundsB.max.x) - Mathf.Max(boundsA.min.x, boundsB.min.x));
+                    float oz = Mathf.Max(0, Mathf.Min(boundsA.max.z, boundsB.max.z) - Mathf.Max(boundsA.min.z, boundsB.min.z));
+                    float area = ox * oz;
+                    if (area > 0.5f)
+                    {
+                        corridorOverlaps++;
+                        Debug.LogError(string.Format(
+                            "[ProcGen:Diag] CORRIDOR OVERLAP: '{0}' and '{1}' share {2:F1}m² of floor area!",
+                            corridorBounds[i].name, corridorBounds[j].name, area));
+                    }
+                }
+            }
+        }
+
+        if (overlapCount > 0 || gapCount > 0 || corridorOverlaps > 0)
+            Debug.LogError(string.Format(
+                "[ProcGen:Diag] LAYOUT ISSUES DETECTED — {0} overlaps, {1} gaps, {2} corridor intersections. Consider regenerating with a different seed.",
+                overlapCount, gapCount, corridorOverlaps));
+        else
+            Debug.Log("[ProcGen:Diag] Layout validation passed — no overlaps or gaps detected.");
+
         Debug.Log(string.Format(
             "[ProcGen] Ship ready! Seed={0} | Spine={1} corridors | CargoBay after cor{2} | " +
             "Branches={3} (bridge on branch {4}) | " +
             "Rooms: {5} placed / {6} skipped | " +
-            "Vent segments={7} | Ceiling seals applied={8}",
+            "Vent segments={7} | Ceiling seals applied={8} | " +
+            "Diagnostics: {9} overlaps, {10} gaps, {11} corridor intersections",
             actualSeed, spineCount, cargoAfterIdx - 1,
             branchCount, bridgeBranch,
             roomsPlaced, roomsSkipped,
-            ventSegs, ceilFixes));
+            ventSegs, ceilFixes,
+            overlapCount, gapCount, corridorOverlaps));
     }
 
+    // ─────────────────────────────────────────────────────────────────────
+    //  Helper: recursively collect Renderer bounds from a transform tree.
+    // ─────────────────────────────────────────────────────────────────────
+    private void CollectBoundsRecursive(Transform t,
+        System.Collections.Generic.List<(string, Bounds)> list)
+    {
+        Renderer rend = t.GetComponent<Renderer>();
+        if (rend != null)
+            list.Add((t.name, rend.bounds));
+        for (int i = 0; i < t.childCount; i++)
+            CollectBoundsRecursive(t.GetChild(i), list);
+    }
 }
