@@ -1998,9 +1998,34 @@ public class ShipLayoutGenerator : MonoBehaviour
 
         // --- Overlap Detection (cross-module only) ---
         //  Compute a combined bounding box per top-level module child, then
-        //  compare module pairs.  Same-module internal pieces (Floor↔Wall,
-        //  Wall↔Ceiling corner seams) are intentional and never flagged.
-        //  Only cross-module overlaps above 0.5 m³ are considered real issues.
+        //  compare module pairs.  Internal pieces (vents, doors, props, eng
+        //  wall segments) that intentionally penetrate adjacent modules are
+        //  excluded via IsInternalPiece.  Only Room-vs-Room or Room-vs-Corridor
+        //  overlaps above 0.5 m³ are flagged as real issues.
+        bool IsInternalPiece(string n)
+        {
+            // Vent shaft pieces — run through rooms/corridors at ceiling height by design
+            if (n.StartsWith("VS_") || n.StartsWith("VB_") || n.StartsWith("VJ_") ||
+                n.StartsWith("VDrop_") || n.StartsWith("VElbow_") || n.StartsWith("VentCap_") ||
+                n.StartsWith("VR_") || n.StartsWith("VL_"))
+                return true;
+            // Doors — placed at the boundary between two modules
+            if (n.StartsWith("Door_"))
+                return true;
+            // Props (crates, consoles, pillars, furniture) placed inside rooms
+            if (n.Contains("Crate") || n.Contains("Console") || n.Contains("Pillar") ||
+                n.Contains("Table") || n.Contains("Bed"))
+                return true;
+            // Engineering wall segments — overlap the engineering room AABB by design
+            if (n.StartsWith("EngFWD_") || n.StartsWith("EngFW_") || n.StartsWith("EngHub_") ||
+                n.StartsWith("EngTr_"))
+                return true;
+            // Corridor end caps
+            if (n.Contains("TermCap") || n.Contains("CorCap"))
+                return true;
+            return false;
+        }
+
         var modBounds = new System.Collections.Generic.List<(string name, Bounds bounds)>();
         for (int i = 0; i < transform.childCount; i++)
         {
@@ -2017,17 +2042,19 @@ public class ShipLayoutGenerator : MonoBehaviour
         {
             for (int j = i + 1; j < modBounds.Count; j++)
             {
+                // Skip any pair where either object is a vent, door, prop, or eng wall piece —
+                // these intentionally intersect adjacent modules and are never true overlaps.
+                if (IsInternalPiece(modBounds[i].name) || IsInternalPiece(modBounds[j].name))
+                    continue;
                 if (!modBounds[i].bounds.Intersects(modBounds[j].bounds)) continue;
                 Bounds bA = modBounds[i].bounds, bB = modBounds[j].bounds;
                 float ox = Mathf.Max(0, Mathf.Min(bA.max.x, bB.max.x) - Mathf.Max(bA.min.x, bB.min.x));
                 float oy = Mathf.Max(0, Mathf.Min(bA.max.y, bB.max.y) - Mathf.Max(bA.min.y, bB.min.y));
                 float oz = Mathf.Max(0, Mathf.Min(bA.max.z, bB.max.z) - Mathf.Max(bA.min.z, bB.min.z));
                 float vol = ox * oy * oz;
-                // 0.5 m³ threshold: adjacent modules (room touching a corridor) touch at a
-                // shared wall face and produce near-zero AABB overlap (< 0.01 m³) because
-                // rooms are placed at x = ±(HalfCor + W/2) so their outer edges align exactly
-                // with the corridor face.  A genuine cross-module penetration (e.g. two branch
-                // corridors passing through each other) produces much larger volumes.
+                // 0.5 m³ threshold: adjacent modules (room touching a corridor) produce
+                // near-zero AABB overlap because rooms are placed at x = ±(HalfCor + W/2).
+                // A genuine cross-module penetration produces much larger volumes.
                 if (vol > 0.5f)
                 {
                     overlapCount++;
