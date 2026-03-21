@@ -929,11 +929,11 @@ public class ShipLayoutGenerator : MonoBehaviour
                 if (belowH > 0.01f)
                     MakeBoxOnParent(transform, "EngFWD_DT_Bot_" + i,
                         new Vector3(bx, doorH + belowH / 2f, wallZ),
-                        openingW, belowH, wallThickness);
+                        ventW, belowH, wallThickness);
                 if (aboveH > 0.01f)
                     MakeBoxOnParent(transform, "EngFWD_DT_Abv_" + i,
                         new Vector3(bx, vTop + aboveH / 2f, wallZ),
-                        openingW, aboveH, wallThickness);
+                        ventW, aboveH, wallThickness);
             }
         }
 
