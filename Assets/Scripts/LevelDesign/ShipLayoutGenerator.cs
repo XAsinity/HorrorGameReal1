@@ -905,9 +905,12 @@ public class ShipLayoutGenerator : MonoBehaviour
                     if (roomHeight > 0.01f)
                         MakeBoxOnParent(transform, "EngFWD_Bot_" + i,
                             new Vector3(cx, roomHeight / 2f, wallZ), sw, roomHeight, wallThickness);
-                    if (engH - vTop > 0.01f)
+                    {
+                        // Clamp above-vent panel to at least wallThickness so no razor-thin gap forms.
+                        float topSegH = Mathf.Max(engH - vTop, wallThickness);
                         MakeBoxOnParent(transform, "EngFWD_Top_" + i,
-                            new Vector3(cx, vTop + (engH - vTop) / 2f, wallZ), sw, engH - vTop, wallThickness);
+                            new Vector3(cx, engH - topSegH / 2f, wallZ), sw, topSegH, wallThickness);
+                    }
                 }
                 else
                 {
@@ -925,7 +928,8 @@ public class ShipLayoutGenerator : MonoBehaviour
         if (topH > 0.01f)
         {
             float belowH = Mathf.Max(0f, roomHeight - doorH);
-            float aboveH = Mathf.Max(0f, engH - vTop);
+            // Clamp above-vent panel to at least wallThickness so no razor-thin gap forms.
+            float aboveH = Mathf.Max(engH - vTop, wallThickness);
             for (int i = 0; i < openingXs.Length; i++)
             {
                 float bx    = openingXs[i];
@@ -945,10 +949,10 @@ public class ShipLayoutGenerator : MonoBehaviour
                     if (aboveH > 0.01f)
                     {
                         MakeBoxOnParent(transform, "EngFWD_DTS_LTop_" + i,
-                            new Vector3(bx - hvWLocal - sideW / 2f, vTop + aboveH / 2f, wallZ),
+                            new Vector3(bx - hvWLocal - sideW / 2f, engH - aboveH / 2f, wallZ),
                             sideW, aboveH, wallThickness);
                         MakeBoxOnParent(transform, "EngFWD_DTS_RTop_" + i,
-                            new Vector3(bx + hvWLocal + sideW / 2f, vTop + aboveH / 2f, wallZ),
+                            new Vector3(bx + hvWLocal + sideW / 2f, engH - aboveH / 2f, wallZ),
                             sideW, aboveH, wallThickness);
                     }
                 }
@@ -958,7 +962,7 @@ public class ShipLayoutGenerator : MonoBehaviour
                         ventW, belowH, wallThickness);
                 if (aboveH > 0.01f)
                     MakeBoxOnParent(transform, "EngFWD_DT_Abv_" + i,
-                        new Vector3(bx, vTop + aboveH / 2f, wallZ),
+                        new Vector3(bx, engH - aboveH / 2f, wallZ),
                         ventW, aboveH, wallThickness);
             }
         }
@@ -1136,43 +1140,61 @@ public class ShipLayoutGenerator : MonoBehaviour
             // ────────────────────────────────────────────────────────────────
             if (bPat[b] == 1)
             {
-                bool gl = bSideDir[b] == -1;
-                float testSideLen = bSideLen[b];
-                bool  foundFit    = false;
+                bool  foundFit = false;
 
-                while (testSideLen >= corridorWidth + kBranchSideLenMinTol)
+                // ── Try both side directions before giving up on Z-shape ──────────
+                // Pass 0: original direction.  Pass 1: opposite direction.
+                // Only fall back to straight if BOTH directions fail.
+                for (int dirPass = 0; dirPass < 2 && !foundFit; dirPass++)
                 {
-                    float tCor1Z  = strFr + HalfCor;
-                    float tCor2X  = gl ? bX[b] - testSideLen - corridorWidth
-                                       : bX[b] + testSideLen + corridorWidth;
-                    float tFinCZ  = tCor1Z + HalfCor + bFinLen[b] / 2f;
-                    float tSideCX = gl ? bX[b] - HalfCor - testSideLen / 2f
-                                       : bX[b] + HalfCor + testSideLen / 2f;
-
-                    bool overlap =
-                        BoundsOverlap(branchSegBds, bX[b],    tCor1Z, corridorWidth / 2f, corridorWidth / 2f, kPad) ||
-                        BoundsOverlap(branchSegBds, tSideCX,  tCor1Z, testSideLen / 2f,   corridorWidth / 2f, kPad) ||
-                        BoundsOverlap(branchSegBds, tCor2X,   tCor1Z, corridorWidth / 2f, corridorWidth / 2f, kPad) ||
-                        BoundsOverlap(branchSegBds, tCor2X,   tFinCZ, corridorWidth / 2f, bFinLen[b] / 2f,   kPad);
-
-                    if (!overlap)
+                    if (dirPass == 1)
                     {
-                        foundFit = true;
-                        if (testSideLen < bSideLen[b] - 0.01f)
-                            Debug.Log(string.Format(
-                                "[ProcGen:AI] Branch {0} Z-shape: bSideLen clamped from {1:F1}m → {2:F1}m to avoid overlap with previous branch corridors.",
-                                b, bSideLen[b], testSideLen));
-                        bSideLen[b] = testSideLen;
-                        break;
+                        // Capture the failed direction label before flipping.
+                        string failedDirLabel = bSideDir[b] == -1 ? "left" : "right";
+                        bSideDir[b] = -bSideDir[b];
+                        Debug.Log(string.Format(
+                            "[ProcGen:AI] Branch {0}: Z-shape dir={1} failed — flipping to {2} and retrying.",
+                            b, failedDirLabel,
+                            bSideDir[b] == -1 ? "left" : "right"));
                     }
-                    testSideLen -= kBranchSideLenStep;
+
+                    bool  gl          = bSideDir[b] == -1;
+                    float testSideLen = bSideLen[b]; // reset to original chosen length each direction
+
+                    while (testSideLen >= corridorWidth + kBranchSideLenMinTol)
+                    {
+                        float tCor1Z  = strFr + HalfCor;
+                        float tCor2X  = gl ? bX[b] - testSideLen - corridorWidth
+                                           : bX[b] + testSideLen + corridorWidth;
+                        float tFinCZ  = tCor1Z + HalfCor + bFinLen[b] / 2f;
+                        float tSideCX = gl ? bX[b] - HalfCor - testSideLen / 2f
+                                           : bX[b] + HalfCor + testSideLen / 2f;
+
+                        bool overlap =
+                            BoundsOverlap(branchSegBds, bX[b],    tCor1Z, corridorWidth / 2f, corridorWidth / 2f, kPad) ||
+                            BoundsOverlap(branchSegBds, tSideCX,  tCor1Z, testSideLen / 2f,   corridorWidth / 2f, kPad) ||
+                            BoundsOverlap(branchSegBds, tCor2X,   tCor1Z, corridorWidth / 2f, corridorWidth / 2f, kPad) ||
+                            BoundsOverlap(branchSegBds, tCor2X,   tFinCZ, corridorWidth / 2f, bFinLen[b] / 2f,   kPad);
+
+                        if (!overlap)
+                        {
+                            foundFit = true;
+                            if (testSideLen < bSideLen[b] - 0.01f)
+                                Debug.Log(string.Format(
+                                    "[ProcGen:AI] Branch {0} Z-shape: bSideLen clamped from {1:F1}m → {2:F1}m to avoid overlap with previous branch corridors.",
+                                    b, bSideLen[b], testSideLen));
+                            bSideLen[b] = testSideLen;
+                            break;
+                        }
+                        testSideLen -= kBranchSideLenStep;
+                    }
                 }
 
                 if (!foundFit)
                 {
                     bPat[b] = 0;
                     Debug.Log(string.Format(
-                        "[ProcGen:AI] Branch {0}: Z-shape can't fit without overlap even at min sideLen — falling back to straight pattern.",
+                        "[ProcGen:AI] Branch {0}: Z-shape can't fit in either direction at any sideLen — falling back to straight pattern.",
                         b));
                 }
                 else
@@ -1568,9 +1590,12 @@ public class ShipLayoutGenerator : MonoBehaviour
             if (vY > 0.01f)
                 MakeBoxOnParent(transform, "EngHub_WR_Bot",
                     new Vector3(wrX, vY / 2f, engCZ), wallThickness, vY, engD);
-            if (engH - engVTop > 0.01f)
+            {
+                // Clamp above-vent panel to at least wallThickness so no razor-thin gap forms.
+                float wrTopH = Mathf.Max(engH - engVTop, wallThickness);
                 MakeBoxOnParent(transform, "EngHub_WR_Top",
-                    new Vector3(wrX, engVTop + (engH - engVTop) / 2f, engCZ), wallThickness, engH - engVTop, engD);
+                    new Vector3(wrX, engH - wrTopH / 2f, engCZ), wallThickness, wrTopH, engD);
+            }
         }
         if (engHL)
         {
@@ -1589,9 +1614,12 @@ public class ShipLayoutGenerator : MonoBehaviour
             if (vY > 0.01f)
                 MakeBoxOnParent(transform, "EngHub_WL_Bot",
                     new Vector3(wlX, vY / 2f, engCZ), wallThickness, vY, engD);
-            if (engH - engVTop > 0.01f)
+            {
+                // Clamp above-vent panel to at least wallThickness so no razor-thin gap forms.
+                float wlTopH = Mathf.Max(engH - engVTop, wallThickness);
                 MakeBoxOnParent(transform, "EngHub_WL_Top",
-                    new Vector3(wlX, engVTop + (engH - engVTop) / 2f, engCZ), wallThickness, engH - engVTop, engD);
+                    new Vector3(wlX, engH - wlTopH / 2f, engCZ), wallThickness, wlTopH, engD);
+            }
         }
 
         // --- Fork branches ---
@@ -2183,7 +2211,33 @@ public class ShipLayoutGenerator : MonoBehaviour
                     for (int j = 0; j < transform.childCount; j++)
                     {
                         string pn = transform.GetChild(j).name;
+
+                        // Standard door name match (e.g., Door_MessHall_0 contains room prefix)
                         if (pn.Contains("Door_") && pn.Contains(roomPrefix))
+                        { hasDoorReplacement = true; break; }
+
+                        // Handle abbreviated room names in door names:
+                        //   DockingBay → Door_Dock_*,  CargoBay → Door_Cargo_*,
+                        //   EngineeringHub → Door_Eng_*
+                        if (pn.StartsWith("Door_"))
+                        {
+                            string[] parts = pn.Split('_');
+                            if (parts.Length >= 2 && roomPrefix.StartsWith(parts[1]))
+                            { hasDoorReplacement = true; break; }
+                        }
+
+                        // Engineering hub front wall is replaced by EngFWD_* pieces,
+                        // not by a Door_* object.
+                        if (roomPrefix == "EngineeringHub" &&
+                            (pn.StartsWith("EngFWD_") || pn.StartsWith("EngFW_") ||
+                             pn.StartsWith("EngHub_WR_") || pn.StartsWith("EngHub_WL_")))
+                        { hasDoorReplacement = true; break; }
+
+                        // Rooms placed as engineering sub-rooms (_EngR / _EngL suffix) have
+                        // their inner wall deleted and replaced by the shared Door_Eng_R/L
+                        // door wall — which contains "Eng" but not the room prefix.
+                        if ((child.name.EndsWith("_EngR") || child.name.EndsWith("_EngL")) &&
+                            pn.StartsWith("Door_Eng_"))
                         { hasDoorReplacement = true; break; }
                     }
                     if (!hasDoorReplacement)
