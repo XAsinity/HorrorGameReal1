@@ -1022,11 +1022,11 @@ public class ShipLayoutGenerator : MonoBehaviour
         for (int i = 0; i < _procRetries; i++)
             actualSeed = (int)(unchecked((long)actualSeed * 6364136223846793005L + 1442695040888963407L) & 0x7FFFFFFF);
         System.Random rng = new System.Random(actualSeed);
-        string _sep = new string('═', 52);
-        Debug.Log("[ProcGen:AI] " + _sep);
+        string bannerSep = new string('═', 52);
+        Debug.Log("[ProcGen:AI] " + bannerSep);
         Debug.Log(string.Format("[ProcGen:AI] <b>INTELLIGENT LAYOUT GENERATION</b>  Seed={0}{1}",
             actualSeed, _procRetries > 0 ? "  <color=#ff9900>(RETRY " + _procRetries + "/5)</color>" : ""));
-        Debug.Log("[ProcGen:AI] " + _sep);
+        Debug.Log("[ProcGen:AI] " + bannerSep);
 
         // AABB overlap safety margin.  0.05 is intentionally small: side rooms are
         // designed to abut (slightly overlap) their parent corridor wall for proper
@@ -1368,11 +1368,11 @@ public class ShipLayoutGenerator : MonoBehaviour
 
         // Branch pattern summary log
         {
-            int _zc = 0, _lc = 0, _sc = 0;
-            for (int b = 0; b < branchCount; b++) { if (bPat[b] == 1) _zc++; else if (bPat[b] == 2) _lc++; else _sc++; }
+            int zCount = 0, lCount = 0, sCount = 0;
+            for (int b = 0; b < branchCount; b++) { if (bPat[b] == 1) zCount++; else if (bPat[b] == 2) lCount++; else sCount++; }
             Debug.Log(string.Format(
                 "[ProcGen:AI] <b>Phase 1 complete</b>: {0}×Z-shape  {1}×L-shape  {2}×straight-fallback",
-                _zc, _lc, _sc));
+                zCount, lCount, sCount));
         }
 
         // Room pool (Fisher-Yates shuffle for reproducibility)
@@ -1678,10 +1678,10 @@ public class ShipLayoutGenerator : MonoBehaviour
         // ════════════════════════════════════════════════════════
         Debug.Log("[ProcGen:AI] <b>── PHASE 3: Building Geometry ──</b>");
         {
-            int _zc3 = 0, _lc3 = 0, _sc3 = 0;
-            for (int b = 0; b < branchCount; b++) { if (bPat[b] == 1) _zc3++; else if (bPat[b] == 2) _lc3++; else _sc3++; }
+            int zCntP3 = 0, lCntP3 = 0, sCntP3 = 0;
+            for (int b = 0; b < branchCount; b++) { if (bPat[b] == 1) zCntP3++; else if (bPat[b] == 2) lCntP3++; else sCntP3++; }
             Debug.Log(string.Format("[ProcGen:AI]   Branches: {0}×Z-shape | {1}×L-shape | {2}×straight  |  Eng-R={3} Eng-L={4}",
-                _zc3, _lc3, _sc3, engHR ? "room" : "solid", engHL ? "room" : "solid"));
+                zCntP3, lCntP3, sCntP3, engHR ? "room" : "solid", engHL ? "room" : "solid"));
         }
 
         // --- Docking Bay ---
@@ -2580,13 +2580,13 @@ public class ShipLayoutGenerator : MonoBehaviour
         _procRetries = 0;
 
         // Tally branch patterns for stats and summary
-        int _finalZC = 0, _finalLC = 0, _finalSC = 0, _termCapped = 0;
+        int finalZCount = 0, finalLCount = 0, finalSCount = 0, terminalsCapped = 0;
         for (int b = 0; b < branchCount; b++)
         {
-            if (bPat[b] == 1) _finalZC++;
-            else if (bPat[b] == 2) _finalLC++;
-            else _finalSC++;
-            if (!bTermExists[b]) _termCapped++;
+            if (bPat[b] == 1) finalZCount++;
+            else if (bPat[b] == 2) finalLCount++;
+            else finalSCount++;
+            if (!bTermExists[b]) terminalsCapped++;
         }
 
         // Write last-generation statistics for ShipLayoutTrainer / ShipLayoutScorer
@@ -2595,16 +2595,16 @@ public class ShipLayoutGenerator : MonoBehaviour
         LastOverlapCount     = overlapCount;
         LastGapCount         = gapCount;
         LastCorridorOverlaps = corridorOverlaps;
-        LastZShapeCount      = _finalZC;
-        LastLShapeCount      = _finalLC;
-        LastStraightCount    = _finalSC;
+        LastZShapeCount      = finalZCount;
+        LastLShapeCount      = finalLCount;
+        LastStraightCount    = finalSCount;
         LastBranchCount      = branchCount;
         LastVentCutsMade     = ventCutsMade;
-        LastTerminalsCapped  = _termCapped;
+        LastTerminalsCapped  = terminalsCapped;
         LastActualSeed       = actualSeed;
 
-        string _sep2 = new string('─', 52);
-        Debug.Log("[ProcGen:AI] " + _sep2);
+        string summarySep = new string('─', 52);
+        Debug.Log("[ProcGen:AI] " + summarySep);
         Debug.Log(string.Format(
             "[ProcGen:AI] <b>GENERATION COMPLETE</b>  Seed={0}{1}",
             actualSeed, _procRetries > 0 ? "  (retry " + _procRetries + ")" : ""));
@@ -2616,7 +2616,7 @@ public class ShipLayoutGenerator : MonoBehaviour
             roomsPlaced, roomsSkipped));
         Debug.Log(string.Format(
             "[ProcGen:AI]   Branches ({0}): <color=#00ff88>{1}×Z-shape</color> | <color=#ffcc00>{2}×L-shape</color> | <color=#ff9988>{3}×straight</color> | {4} terminal(s) capped",
-            branchCount, _finalZC, _finalLC, _finalSC, _termCapped));
+            branchCount, finalZCount, finalLCount, finalSCount, terminalsCapped));
         Debug.Log(string.Format(
             "[ProcGen:AI]   Vents  : {0} segments | {1} ceiling cuts | {2} fallback seals",
             ventSegs, ventCutsMade, ceilFixes));
@@ -2626,6 +2626,6 @@ public class ShipLayoutGenerator : MonoBehaviour
             Debug.Log(string.Format(
                 "[ProcGen:AI]   Diagnostics: <color=#ff4444>{0} overlap(s)</color> | <color=#ff4444>{1} gap(s)</color> | <color=#ff4444>{2} corridor intersection(s)</color>",
                 overlapCount, gapCount, corridorOverlaps));
-        Debug.Log("[ProcGen:AI] " + _sep2);
+        Debug.Log("[ProcGen:AI] " + summarySep);
     }
 }
