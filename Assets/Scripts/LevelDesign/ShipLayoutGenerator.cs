@@ -20,6 +20,23 @@ public class ShipLayoutGenerator : MonoBehaviour
     public bool proceduralLayout = false;
     public int seed = -1; // -1 = random
 
+    [Header("Trained Parameters")]
+    public ShipLayoutTrainedParams trainedParams;
+
+    // Last-generation statistics — written at end of each generation, read by ShipLayoutTrainer/ShipLayoutScorer
+    [System.NonSerialized] public int LastRoomsPlaced;
+    [System.NonSerialized] public int LastRoomsSkipped;
+    [System.NonSerialized] public int LastOverlapCount;
+    [System.NonSerialized] public int LastGapCount;
+    [System.NonSerialized] public int LastCorridorOverlaps;
+    [System.NonSerialized] public int LastZShapeCount;
+    [System.NonSerialized] public int LastLShapeCount;
+    [System.NonSerialized] public int LastStraightCount;
+    [System.NonSerialized] public int LastBranchCount;
+    [System.NonSerialized] public int LastVentCutsMade;
+    [System.NonSerialized] public int LastTerminalsCapped;
+    [System.NonSerialized] public int LastActualSeed;
+
     private float HalfCor { get { return corridorWidth / 2f; } }
     private float ventW = 0.9f;
     private float ventH = 0.7f;
@@ -1005,8 +1022,11 @@ public class ShipLayoutGenerator : MonoBehaviour
         for (int i = 0; i < _procRetries; i++)
             actualSeed = (int)(unchecked((long)actualSeed * 6364136223846793005L + 1442695040888963407L) & 0x7FFFFFFF);
         System.Random rng = new System.Random(actualSeed);
-        Debug.Log("[ProcGen] Starting intelligent layout generation. Seed=" + actualSeed +
-            (_procRetries > 0 ? " (retry " + _procRetries + ")" : ""));
+        string _sep = new string('═', 52);
+        Debug.Log("[ProcGen:AI] " + _sep);
+        Debug.Log(string.Format("[ProcGen:AI] <b>INTELLIGENT LAYOUT GENERATION</b>  Seed={0}{1}",
+            actualSeed, _procRetries > 0 ? "  <color=#ff9900>(RETRY " + _procRetries + "/5)</color>" : ""));
+        Debug.Log("[ProcGen:AI] " + _sep);
 
         // AABB overlap safety margin.  0.05 is intentionally small: side rooms are
         // designed to abut (slightly overlap) their parent corridor wall for proper
@@ -1032,6 +1052,7 @@ public class ShipLayoutGenerator : MonoBehaviour
         //  and fork branch layout.  All Z positions are calculated
         //  here; no geometry is built yet.
         // ════════════════════════════════════════════════════════
+        Debug.Log("[ProcGen:AI] <b>── PHASE 1: Spine Topology Planning ──</b>");
 
         float dockW   = RngRange(rng, 14f, 18f);
         float dockD   = RngRange(rng, 10f, 14f);
@@ -1079,7 +1100,7 @@ public class ShipLayoutGenerator : MonoBehaviour
         // Branch geometry
         int branchCount = rng.Next(1, 4);
         float[] bX       = new float[branchCount];
-        int[]   bPat     = new int[branchCount];    // 0=straight, 1=Z-shaped
+        int[]   bPat     = new int[branchCount];    // 0=straight, 1=Z-shaped, 2=L-shaped
         int[]   bSideDir = new int[branchCount];    // -1=turn left, +1=turn right
         float[] bStrLen  = new float[branchCount];
         float[] bSideLen = new float[branchCount];
@@ -1100,6 +1121,10 @@ public class ShipLayoutGenerator : MonoBehaviour
         { bX[0] = -(engW / 4f); bX[1] = engW / 4f; }
         else
         { bX[0] = -(engW / 3f); bX[1] = 0f; bX[2] = engW / 3f; }
+        Debug.Log(string.Format("[ProcGen:AI] Topology: spine={0} corridors | cargo after cor{1} | eng={2:F1}×{3:F1}×{4:F1}h | branches={5} at X=[{6}]",
+            spineCount, cargoAfterIdx,
+            engW, engD, engH, branchCount,
+            string.Join(", ", System.Array.ConvertAll(bX, x => x.ToString("F1")))));
 
         // Incremental branch-corridor AABB registry used only during Phase 1 geometry
         // planning.  This list is SEPARATE from the main 'bds' list to avoid false
@@ -1138,75 +1163,168 @@ public class ShipLayoutGenerator : MonoBehaviour
             //   3. If no valid length exists, fall back to straight pattern
             //      (bPat = 0) so the layout is always playable.
             // ────────────────────────────────────────────────────────────────
+            Debug.Log(string.Format("[ProcGen:AI] Branch {0} @ X={1:F1}: initial pattern={2} | strLen={3:F1}m sideLen={4:F1}m{5} dir={6}",
+                b, bX[b], bPat[b] == 1 ? "Z-shape" : "straight",
+                bStrLen[b], bSideLen[b], bPat[b] == 1 ? string.Format(" finLen={0:F1}m", bFinLen[b]) : "",
+                bSideDir[b] == -1 ? "left" : "right"));
+
             if (bPat[b] == 1)
             {
-                bool  foundFit = false;
+                bool  foundFit    = false;
+                bool  foundLShape = false;
+                int   origDir     = bSideDir[b];
+                float winStrLen   = bStrLen[b];
+                float winSideLen  = bSideLen[b];
+                int   winDir      = bSideDir[b];
 
-                // ── Try both side directions before giving up on Z-shape ──────────
-                // Pass 0: original direction.  Pass 1: opposite direction.
-                // Only fall back to straight if BOTH directions fail.
-                for (int dirPass = 0; dirPass < 2 && !foundFit; dirPass++)
+                // ── Try Z-shape: 3 forward-lengths × 2 directions × shrinking sideLen ──────────
+                // 3 strLen candidates: 100%, 75%, 50% of initial pick (minimum 4 m).
+                // Trying shorter forward runs shifts the Z-shape's lateral section to an
+                // earlier Z position, potentially avoiding overlaps with sibling branches.
+                float[] strCandidates = {
+                    bStrLen[b],
+                    Mathf.Max(4f, bStrLen[b] * 0.75f),
+                    Mathf.Max(4f, bStrLen[b] * 0.5f)
+                };
+
+                for (int si = 0; si < strCandidates.Length && !foundFit; si++)
                 {
-                    if (dirPass == 1)
-                    {
-                        // Capture the failed direction label before flipping.
-                        string failedDirLabel = bSideDir[b] == -1 ? "left" : "right";
-                        bSideDir[b] = -bSideDir[b];
+                    float testStrLen = strCandidates[si];
+                    float testStrFr  = engFr + testStrLen;
+
+                    if (si > 0)
                         Debug.Log(string.Format(
-                            "[ProcGen:AI] Branch {0}: Z-shape dir={1} failed — flipping to {2} and retrying.",
-                            b, failedDirLabel,
-                            bSideDir[b] == -1 ? "left" : "right"));
-                    }
+                            "[ProcGen:AI]   Branch {0}: Z-shape all directions failed at strLen={1:F1}m → trying shorter strLen={2:F1}m.",
+                            b, strCandidates[si - 1], testStrLen));
 
-                    bool  gl          = bSideDir[b] == -1;
-                    float testSideLen = bSideLen[b]; // reset to original chosen length each direction
-
-                    while (testSideLen >= corridorWidth + kBranchSideLenMinTol)
+                    for (int dirPass = 0; dirPass < 2 && !foundFit; dirPass++)
                     {
-                        float tCor1Z  = strFr + HalfCor;
-                        float tCor2X  = gl ? bX[b] - testSideLen - corridorWidth
-                                           : bX[b] + testSideLen + corridorWidth;
-                        float tFinCZ  = tCor1Z + HalfCor + bFinLen[b] / 2f;
-                        float tSideCX = gl ? bX[b] - HalfCor - testSideLen / 2f
-                                           : bX[b] + HalfCor + testSideLen / 2f;
+                        int  testDir = dirPass == 0 ? origDir : -origDir;
+                        bool gl      = testDir == -1;
 
-                        bool overlap =
-                            BoundsOverlap(branchSegBds, bX[b],    tCor1Z, corridorWidth / 2f, corridorWidth / 2f, kPad) ||
-                            BoundsOverlap(branchSegBds, tSideCX,  tCor1Z, testSideLen / 2f,   corridorWidth / 2f, kPad) ||
-                            BoundsOverlap(branchSegBds, tCor2X,   tCor1Z, corridorWidth / 2f, corridorWidth / 2f, kPad) ||
-                            BoundsOverlap(branchSegBds, tCor2X,   tFinCZ, corridorWidth / 2f, bFinLen[b] / 2f,   kPad);
+                        if (dirPass == 1)
+                            Debug.Log(string.Format(
+                                "[ProcGen:AI]   Branch {0}: Z-shape dir={1} failed at strLen={2:F1}m — flipping to {3} and retrying.",
+                                b, origDir == -1 ? "left" : "right", testStrLen, testDir == -1 ? "left" : "right"));
 
-                        if (!overlap)
+                        float testSideLen = bSideLen[b]; // reset to original chosen length each pass
+                        int   shrinkSteps = 0;
+
+                        while (testSideLen >= corridorWidth + kBranchSideLenMinTol)
                         {
-                            foundFit = true;
-                            if (testSideLen < bSideLen[b] - 0.01f)
-                                Debug.Log(string.Format(
-                                    "[ProcGen:AI] Branch {0} Z-shape: bSideLen clamped from {1:F1}m → {2:F1}m to avoid overlap with previous branch corridors.",
-                                    b, bSideLen[b], testSideLen));
-                            bSideLen[b] = testSideLen;
-                            break;
+                            float tCor1Z  = testStrFr + HalfCor;
+                            float tCor2X  = gl ? bX[b] - testSideLen - corridorWidth
+                                               : bX[b] + testSideLen + corridorWidth;
+                            float tFinCZ  = tCor1Z + HalfCor + bFinLen[b] / 2f;
+                            float tSideCX = gl ? bX[b] - HalfCor - testSideLen / 2f
+                                               : bX[b] + HalfCor + testSideLen / 2f;
+
+                            bool overlap =
+                                BoundsOverlap(branchSegBds, bX[b],    tCor1Z, corridorWidth / 2f, corridorWidth / 2f, kPad) ||
+                                BoundsOverlap(branchSegBds, tSideCX,  tCor1Z, testSideLen / 2f,   corridorWidth / 2f, kPad) ||
+                                BoundsOverlap(branchSegBds, tCor2X,   tCor1Z, corridorWidth / 2f, corridorWidth / 2f, kPad) ||
+                                BoundsOverlap(branchSegBds, tCor2X,   tFinCZ, corridorWidth / 2f, bFinLen[b] / 2f,   kPad);
+
+                            if (!overlap)
+                            {
+                                foundFit   = true;
+                                winStrLen  = testStrLen;
+                                winSideLen = testSideLen;
+                                winDir     = testDir;
+                                break;
+                            }
+                            testSideLen -= kBranchSideLenStep;
+                            shrinkSteps++;
                         }
-                        testSideLen -= kBranchSideLenStep;
+
+                        if (!foundFit)
+                            Debug.Log(string.Format(
+                                "[ProcGen:AI]   Branch {0}: Z-shape dir={1} strLen={2:F1}m — no sideLen fits after {3} shrink steps.",
+                                b, testDir == -1 ? "left" : "right", testStrLen, shrinkSteps));
                     }
                 }
 
-                if (!foundFit)
+                if (foundFit)
                 {
-                    bPat[b] = 0;
+                    bStrLen[b]  = winStrLen;
+                    bSideLen[b] = winSideLen;
+                    bSideDir[b] = winDir;
+                    strFr       = engFr + bStrLen[b];
+                    bool adjusted = winSideLen < bSideLen[b] ||
+                                    System.Math.Abs(winStrLen - strCandidates[0]) > 0.01f;
                     Debug.Log(string.Format(
-                        "[ProcGen:AI] Branch {0}: Z-shape can't fit in either direction at any sideLen — falling back to straight pattern.",
-                        b));
+                        "[ProcGen:AI] Branch {0}: <color=#00ff88><b>✓ Z-shape accepted</b></color> strLen={1:F1}m sideLen={2:F1}m dir={3}{4}.",
+                        b, bStrLen[b], bSideLen[b], bSideDir[b] == -1 ? "left" : "right",
+                        adjusted ? " <color=#ffcc00>(config adjusted to fit)</color>" : ""));
                 }
                 else
                 {
+                    // ── Z-shape failed: try L-shape (straight + corner + side + corner, no Fin corridor) ──
                     Debug.Log(string.Format(
-                        "[ProcGen:AI] Branch {0}: Z-shape accepted, sideLen={1:F1}m dir={2}.",
-                        b, bSideLen[b], bSideDir[b] == -1 ? "left" : "right"));
+                        "[ProcGen:AI] Branch {0}: <color=#ffcc00>Z-shape exhausted</color> ({1} strLen × 2 dir × N sideLen attempts failed) — <b>trying L-shape</b>.",
+                        b, strCandidates.Length));
+
+                    bSideDir[b] = origDir; // reset direction before L-shape search
+                    float lStrFr = engFr + bStrLen[b]; // L-shape uses original strLen
+
+                    for (int dirPass = 0; dirPass < 2 && !foundLShape; dirPass++)
+                    {
+                        int  testDir = dirPass == 0 ? origDir : -origDir;
+                        bool gl      = testDir == -1;
+
+                        if (dirPass == 1)
+                            Debug.Log(string.Format(
+                                "[ProcGen:AI]   Branch {0}: L-shape dir={1} failed — flipping to {2}.",
+                                b, origDir == -1 ? "left" : "right", testDir == -1 ? "left" : "right"));
+
+                        float testSideLen = bSideLen[b];
+
+                        while (testSideLen >= corridorWidth + kBranchSideLenMinTol)
+                        {
+                            float tCor1Z  = lStrFr + HalfCor;
+                            float tCor2X  = gl ? bX[b] - testSideLen - corridorWidth
+                                               : bX[b] + testSideLen + corridorWidth;
+                            float tSideCX = gl ? bX[b] - HalfCor - testSideLen / 2f
+                                               : bX[b] + HalfCor + testSideLen / 2f;
+
+                            // L-shape: only C1 + side + C2 (no Fin corridor to check)
+                            bool overlap =
+                                BoundsOverlap(branchSegBds, bX[b],    tCor1Z, corridorWidth / 2f, corridorWidth / 2f, kPad) ||
+                                BoundsOverlap(branchSegBds, tSideCX,  tCor1Z, testSideLen / 2f,   corridorWidth / 2f, kPad) ||
+                                BoundsOverlap(branchSegBds, tCor2X,   tCor1Z, corridorWidth / 2f, corridorWidth / 2f, kPad);
+
+                            if (!overlap)
+                            {
+                                foundLShape    = true;
+                                bSideLen[b]    = testSideLen;
+                                bSideDir[b]    = testDir;
+                                break;
+                            }
+                            testSideLen -= kBranchSideLenStep;
+                        }
+                    }
+
+                    if (foundLShape)
+                    {
+                        bPat[b] = 2;
+                        strFr   = engFr + bStrLen[b];
+                        Debug.Log(string.Format(
+                            "[ProcGen:AI] Branch {0}: <color=#00ff88><b>✓ L-shape accepted</b></color> strLen={1:F1}m sideLen={2:F1}m dir={3}.",
+                            b, bStrLen[b], bSideLen[b], bSideDir[b] == -1 ? "left" : "right"));
+                    }
+                    else
+                    {
+                        bSideDir[b] = origDir;
+                        bPat[b]     = 0;
+                        Debug.Log(string.Format(
+                            "[ProcGen:AI] Branch {0}: <color=#ff4444><b>✗ Z and L-shape both exhausted</b></color> — falling back to <b>straight</b> pattern.",
+                            b));
+                    }
                 }
             }
             else
             {
-                Debug.Log(string.Format("[ProcGen:AI] Branch {0}: straight pattern chosen.", b));
+                Debug.Log(string.Format("[ProcGen:AI] Branch {0}: straight pattern chosen (random initial roll).", b));
             }
 
             // Commit geometry for this branch
@@ -1215,30 +1333,46 @@ public class ShipLayoutGenerator : MonoBehaviour
                 bTermBk[b] = strFr;
                 bTermX[b]  = bX[b];
             }
-            else
+            else // Z-shape (bPat==1) or L-shape (bPat==2)
             {
                 bool gl    = bSideDir[b] == -1;
                 bCor1Z[b]  = strFr + HalfCor;
                 bCor2X[b]  = gl ? bX[b] - bSideLen[b] - corridorWidth
                                 : bX[b] + bSideLen[b] + corridorWidth;
-                bFinBk[b]  = bCor1Z[b] + HalfCor;
-                bFinCZ[b]  = bFinBk[b] + bFinLen[b] / 2f;
-                bTermBk[b] = bFinBk[b] + bFinLen[b];
-                bTermX[b]  = bCor2X[b];
 
-                // Register all Z-shape corridor segments so subsequent branches
-                // can check against them.
                 float sCXb = gl ? bX[b] - HalfCor - bSideLen[b] / 2f
                                 : bX[b] + HalfCor + bSideLen[b] / 2f;
+                // Register C1, Side, C2 segments (common to both Z and L)
                 branchSegBds.Add(new Vector4(bX[b],     bCor1Z[b], corridorWidth / 2f, corridorWidth / 2f)); // C1
                 branchSegBds.Add(new Vector4(sCXb,      bCor1Z[b], bSideLen[b] / 2f,   corridorWidth / 2f)); // Side
                 branchSegBds.Add(new Vector4(bCor2X[b], bCor1Z[b], corridorWidth / 2f, corridorWidth / 2f)); // C2
-                branchSegBds.Add(new Vector4(bCor2X[b], bFinCZ[b], corridorWidth / 2f, bFinLen[b] / 2f));    // Fin
+
+                if (bPat[b] == 1) // Z-shape: has final corridor
+                {
+                    bFinBk[b]  = bCor1Z[b] + HalfCor;
+                    bFinCZ[b]  = bFinBk[b] + bFinLen[b] / 2f;
+                    bTermBk[b] = bFinBk[b] + bFinLen[b];
+                    branchSegBds.Add(new Vector4(bCor2X[b], bFinCZ[b], corridorWidth / 2f, bFinLen[b] / 2f)); // Fin
+                }
+                else // L-shape: no final corridor — terminal room starts right after C2
+                {
+                    bTermBk[b] = bCor1Z[b] + HalfCor;
+                }
+                bTermX[b] = bCor2X[b];
             }
 
             // Always register the straight corridor for subsequent branches.
             float strCZ_b = engFr + bStrLen[b] / 2f;
             branchSegBds.Add(new Vector4(bX[b], strCZ_b, corridorWidth / 2f, bStrLen[b] / 2f));
+        }
+
+        // Branch pattern summary log
+        {
+            int _zc = 0, _lc = 0, _sc = 0;
+            for (int b = 0; b < branchCount; b++) { if (bPat[b] == 1) _zc++; else if (bPat[b] == 2) _lc++; else _sc++; }
+            Debug.Log(string.Format(
+                "[ProcGen:AI] <b>Phase 1 complete</b>: {0}×Z-shape  {1}×L-shape  {2}×straight-fallback",
+                _zc, _lc, _sc));
         }
 
         // Room pool (Fisher-Yates shuffle for reproducibility)
@@ -1267,6 +1401,7 @@ public class ShipLayoutGenerator : MonoBehaviour
         //  deciding to skip the room cleanly.  Skipped rooms leave
         //  NO orphaned corridor walls, door cuts, or vent branches.
         // ════════════════════════════════════════════════════════
+        Debug.Log("[ProcGen:AI] <b>── PHASE 2: Intelligent Room Placement ──</b>");
 
         // Register required rooms first so optionals are tested against them
         bds.Add(new Vector4(0f, dockZ,   dockW  / 2f, dockD  / 2f));
@@ -1288,7 +1423,7 @@ public class ShipLayoutGenerator : MonoBehaviour
             float strCZ = engFr + bStrLen[b] / 2f;
             bStrCorBdsIdx[b] = bds.Count;
             bds.Add(new Vector4(bX[b], strCZ, corridorWidth / 2f, bStrLen[b] / 2f));
-            if (bPat[b] == 1)
+            if (bPat[b] == 1) // Z-shape
             {
                 bool gl    = bSideDir[b] == -1;
                 float sCXb = gl ? bX[b] - HalfCor - bSideLen[b] / 2f
@@ -1298,6 +1433,17 @@ public class ShipLayoutGenerator : MonoBehaviour
                 bds.Add(new Vector4(bCor2X[b], bCor1Z[b], corridorWidth / 2f, corridorWidth / 2f)); // corner2
                 bFinCorBdsIdx[b] = bds.Count;
                 bds.Add(new Vector4(bCor2X[b], bFinCZ[b], corridorWidth / 2f, bFinLen[b] / 2f));
+            }
+            else if (bPat[b] == 2) // L-shape: C1 + side + C2, no Fin corridor
+            {
+                bool gl    = bSideDir[b] == -1;
+                float sCXb = gl ? bX[b] - HalfCor - bSideLen[b] / 2f
+                                : bX[b] + HalfCor + bSideLen[b] / 2f;
+                bds.Add(new Vector4(sCXb, bCor1Z[b], bSideLen[b] / 2f, corridorWidth / 2f));         // side
+                bds.Add(new Vector4(bX[b],    bCor1Z[b], corridorWidth / 2f, corridorWidth / 2f));   // C1
+                bFinCorBdsIdx[b] = bds.Count; // C2 corner serves as "parent" for terminal room exclusion
+                bds.Add(new Vector4(bCor2X[b], bCor1Z[b], corridorWidth / 2f, corridorWidth / 2f));  // C2
+                // No Fin corridor registered for L-shape
             }
         }
 
@@ -1444,22 +1590,38 @@ public class ShipLayoutGenerator : MonoBehaviour
             { bTermW[b] = 7f; bTermD[b] = 5f; bTermNm[b] = "Terminal_" + b; }
             bTermCZ[b] = bTermBk[b] + bTermD[b] / 2f;
 
-            // Terminal rooms sit at the far end of their parent corridor and are designed
-            // to abut it (touching/overlapping the corridor wall face).  Exclude the
-            // parent corridor from the overlap check: straight branch → bStrCorBdsIdx,
-            // Z-shaped branch → bFinCorBdsIdx (the final leg corridor).
-            int termParentCorBdsIdx = (bPat[b] == 1) ? bFinCorBdsIdx[b] : bStrCorBdsIdx[b];
-            if (ProcTryRegister(bds, bTermX[b], bTermCZ[b], bTermW[b] / 2f, bTermD[b] / 2f, kPad, termParentCorBdsIdx))
+            // Terminal rooms: try original size first, then shrink before giving up (capping corridor)
+            // bFinCorBdsIdx serves double duty: for Z-shape it points to the Fin corridor;
+            // for L-shape it points to the C2 corner — both are the immediate parent of the terminal.
+            int termParentCorBdsIdx = (bPat[b] == 0) ? bStrCorBdsIdx[b] : bFinCorBdsIdx[b];
+            float[] termMults  = { 1.0f, 0.85f, 0.70f };
+            bool    termFit    = false;
+            Debug.Log(string.Format("[ProcGen:AI]   Branch {0} terminal '{1}' at X={2:F1}: checking {3:F1}×{4:F1}...",
+                b, bTermNm[b], bTermX[b], bTermW[b], bTermD[b]));
+            for (int mi = 0; mi < termMults.Length && !termFit; mi++)
             {
-                bTermExists[b] = true; roomsPlaced++;
-                Debug.Log(string.Format("[ProcGen:AI] Branch {0} terminal '{1}' placed (w={2:F1} d={3:F1} pat={4}).",
-                    b, bTermNm[b], bTermW[b], bTermD[b], bPat[b] == 0 ? "straight" : "Z-shape"));
+                float tW  = Mathf.Max(4f, bTermW[b] * termMults[mi]);
+                float tD  = Mathf.Max(3f, bTermD[b] * termMults[mi]);
+                float tCZ = bTermBk[b] + tD / 2f;
+                if (mi > 0)
+                    Debug.Log(string.Format("[ProcGen:AI]   Branch {0} terminal '{1}': full size blocked — shrinking to {2:F0}% ({3:F1}×{4:F1}).",
+                        b, bTermNm[b], termMults[mi] * 100f, tW, tD));
+                if (ProcTryRegister(bds, bTermX[b], tCZ, tW / 2f, tD / 2f, kPad, termParentCorBdsIdx))
+                {
+                    bTermExists[b] = true;
+                    bTermW[b] = tW;  bTermD[b] = tD;  bTermCZ[b] = tCZ;
+                    roomsPlaced++;
+                    termFit = true;
+                    string patName  = bPat[b] == 0 ? "straight" : bPat[b] == 1 ? "Z" : "L";
+                    string sizeNote = mi == 0 ? "" : string.Format(" <color=#ffcc00>(at {0:F0}% size)</color>", termMults[mi] * 100f);
+                    Debug.Log(string.Format("[ProcGen:AI]   Branch {0} terminal '{1}' <color=#00ff88>✓ placed</color> (w={2:F1} d={3:F1} pat={4}){5}.",
+                        b, bTermNm[b], tW, tD, patName, sizeNote));
+                }
             }
-            else
+            if (!termFit)
             {
-                Debug.LogWarning("[ProcGen] Terminal " + bTermNm[b] +
-                    " (branch " + b + ") overlaps — skipping. Corridor will be capped.");
-                Debug.Log(string.Format("[ProcGen:AI] Branch {0} terminal '{1}' skipped — overlaps existing geometry. Corridor will be capped.", b, bTermNm[b]));
+                Debug.LogWarning(string.Format("[ProcGen:AI]   Branch {0} terminal '{1}' <color=#ff4444>✗ no size fits</color> — corridor will be capped.",
+                    b, bTermNm[b]));
                 roomsSkipped++;
             }
         }
@@ -1514,6 +1676,13 @@ public class ShipLayoutGenerator : MonoBehaviour
         //  is gated behind the corresponding existence flag set in
         //  Phase 2.  Skipped rooms produce zero orphaned geometry.
         // ════════════════════════════════════════════════════════
+        Debug.Log("[ProcGen:AI] <b>── PHASE 3: Building Geometry ──</b>");
+        {
+            int _zc3 = 0, _lc3 = 0, _sc3 = 0;
+            for (int b = 0; b < branchCount; b++) { if (bPat[b] == 1) _zc3++; else if (bPat[b] == 2) _lc3++; else _sc3++; }
+            Debug.Log(string.Format("[ProcGen:AI]   Branches: {0}×Z-shape | {1}×L-shape | {2}×straight  |  Eng-R={3} Eng-L={4}",
+                _zc3, _lc3, _sc3, engHR ? "room" : "solid", engHL ? "room" : "solid"));
+        }
 
         // --- Docking Bay ---
         var dockGen = AddRoom("DockingBay", 0f, dockZ, dockW, dockH, dockD);
@@ -1583,19 +1752,10 @@ public class ShipLayoutGenerator : MonoBehaviour
         }
         else
         {
-            // No reactor room — replace solid Wall_Right with a vent-channel version
-            // so the vent band at vY is consistent across all engineering hub walls.
-            DeleteChildWall(engGen, "Wall_Right");
-            float wrX = engW / 2f - wallThickness / 2f;
-            if (vY > 0.01f)
-                MakeBoxOnParent(transform, "EngHub_WR_Bot",
-                    new Vector3(wrX, vY / 2f, engCZ), wallThickness, vY, engD);
-            {
-                // Clamp above-vent panel to at least wallThickness so no razor-thin gap forms.
-                float wrTopH = Mathf.Max(engH - engVTop, wallThickness);
-                MakeBoxOnParent(transform, "EngHub_WR_Top",
-                    new Vector3(wrX, engH - wrTopH / 2f, engCZ), wallThickness, wrTopH, engD);
-            }
+            // No reactor room — keep the original solid Wall_Right intact.
+            // No vent branch passes through this wall so no vent-band gap is needed.
+            // (The previous split-panel approach left a gap from vY to engVTop with no geometry.)
+            Debug.Log("[ProcGen:AI]   Eng right wall: <b>no reactor — solid Wall_Right retained</b> (no vent gap needed).");
         }
         if (engHL)
         {
@@ -1608,18 +1768,8 @@ public class ShipLayoutGenerator : MonoBehaviour
         }
         else
         {
-            // No lab room — replace solid Wall_Left with a vent-channel version.
-            DeleteChildWall(engGen, "Wall_Left");
-            float wlX = -(engW / 2f - wallThickness / 2f);
-            if (vY > 0.01f)
-                MakeBoxOnParent(transform, "EngHub_WL_Bot",
-                    new Vector3(wlX, vY / 2f, engCZ), wallThickness, vY, engD);
-            {
-                // Clamp above-vent panel to at least wallThickness so no razor-thin gap forms.
-                float wlTopH = Mathf.Max(engH - engVTop, wallThickness);
-                MakeBoxOnParent(transform, "EngHub_WL_Top",
-                    new Vector3(wlX, engH - wlTopH / 2f, engCZ), wallThickness, wlTopH, engD);
-            }
+            // No lab room — keep the original solid Wall_Left intact.
+            Debug.Log("[ProcGen:AI]   Eng left wall: <b>no lab — solid Wall_Left retained</b> (no vent gap needed).");
         }
 
         // --- Fork branches ---
@@ -1654,7 +1804,7 @@ public class ShipLayoutGenerator : MonoBehaviour
                         corridorWidth, corridorHeight, wallThickness);
                 }
             }
-            else
+            else if (bPat[b] == 1)
             {
                 // Z-shaped branch: straight → corner1 → side corridor → corner2 → final corridor
                 float strZ = engFr + bStrLen[b] / 2f;
@@ -1726,6 +1876,61 @@ public class ShipLayoutGenerator : MonoBehaviour
                     MakeBoxOnParent(transform, bs + "TermCap",
                         new Vector3(bTermX[b], corridorHeight / 2f, bTermBk[b] - wallThickness / 2f),
                         corridorWidth, corridorHeight, wallThickness);
+                    Debug.Log(string.Format("[ProcGen:AI]   Branch {0}: <color=#ffcc00>Z corridor capped</color> (no terminal room).", b));
+                }
+            }
+            else // bPat[b] == 2: L-shaped branch (straight → C1 → side → C2 → terminal, no Fin corridor)
+            {
+                Debug.Log(string.Format("[ProcGen:AI]   Building branch {0}: <b>L-shape</b> strLen={1:F1}m sideLen={2:F1}m dir={3}.",
+                    b, bStrLen[b], bSideLen[b], goLeft ? "left" : "right"));
+
+                float strZ_L = engFr + bStrLen[b] / 2f;
+                AddCorridor(bs + "Str", bX[b], strZ_L, corridorWidth, corridorHeight, bStrLen[b]);
+
+                if (goLeft)
+                    AddCorner(bs + "C1", bX[b], bCor1Z[b], corridorWidth, corridorHeight, corridorWidth,
+                        false, true, false, true);
+                else
+                    AddCorner(bs + "C1", bX[b], bCor1Z[b], corridorWidth, corridorHeight, corridorWidth,
+                        false, true, true, false);
+
+                // Side corridor (rotated 90° — runs along world X)
+                float sideCX_L = goLeft
+                    ? bX[b] - HalfCor - bSideLen[b] / 2f
+                    : bX[b] + HalfCor + bSideLen[b] / 2f;
+                {
+                    GameObject so_L = new GameObject(bs + "Side");
+                    so_L.transform.SetParent(transform);
+                    so_L.transform.localPosition = new Vector3(sideCX_L, 0f, bCor1Z[b]);
+                    so_L.transform.localRotation = Quaternion.Euler(0, 90, 0);
+                    ShipModuleGenerator sg_L = so_L.AddComponent<ShipModuleGenerator>();
+                    sg_L.moduleType = ShipModuleGenerator.ModuleType.Corridor;
+                    sg_L.width = corridorWidth; sg_L.height = corridorHeight; sg_L.depth = bSideLen[b];
+                    sg_L.wallThickness = wallThickness; sg_L.detailLevel = detailLevel;
+                    sg_L.overrideMaterial = prototypeMaterial; sg_L.Generate();
+                }
+
+                if (goLeft)
+                    AddCorner(bs + "C2", bCor2X[b], bCor1Z[b], corridorWidth, corridorHeight, corridorWidth,
+                        true, false, true, false);
+                else
+                    AddCorner(bs + "C2", bCor2X[b], bCor1Z[b], corridorWidth, corridorHeight, corridorWidth,
+                        true, false, false, true);
+
+                // Terminal room connects directly after C2 (no final corridor)
+                if (bTermExists[b])
+                {
+                    termGen[b] = AddRoom(bTermNm[b], bTermX[b], bTermCZ[b], bTermW[b], roomHeight, bTermD[b]);
+                    DeleteChildWall(termGen[b], "Wall_Back");
+                    AddDoorWall("Door_" + bTermNm[b] + "_Bk",
+                        bTermX[b], bTermBk[b] + wallThickness / 2f, bTermW[b], roomHeight);
+                }
+                else
+                {
+                    MakeBoxOnParent(transform, bs + "TermCap",
+                        new Vector3(bTermX[b], corridorHeight / 2f, bTermBk[b] - wallThickness / 2f),
+                        corridorWidth, corridorHeight, wallThickness);
+                    Debug.Log(string.Format("[ProcGen:AI]   Branch {0}: <color=#ffcc00>L corridor capped</color> (no terminal room).", b));
                 }
             }
         }
@@ -1737,6 +1942,7 @@ public class ShipLayoutGenerator : MonoBehaviour
         //  drops are only generated for rooms that exist.
         //  Every dead end receives a VentCap — no open shafts.
         // ════════════════════════════════════════════════════════
+        Debug.Log("[ProcGen:AI] <b>── PHASE 4: Vent Network ──</b>");
 
         // --- Dock: dead-end cap + entry elbow ---
         float dockCapZ = dockZ - dockD / 2f + 1f;
@@ -1869,7 +2075,7 @@ public class ShipLayoutGenerator : MonoBehaviour
                 else
                     AddVentCap("VentCap_Term" + b, bTermX[b], vY, termVentEndZ);
             }
-            else
+            else if (bPat[b] == 1)
             {
                 // Z-shaped branch shaft
                 bool goLeft = bSideDir[b] == -1;
@@ -1933,12 +2139,57 @@ public class ShipLayoutGenerator : MonoBehaviour
                 else
                     AddVentCap("VentCap_Term" + b, bCor2X[b], vY, termVentEndZ);
             }
+            else // bPat[b] == 2: L-shaped branch shaft
+            {
+                bool goLeft_v = bSideDir[b] == -1;
+
+                // Straight segment up to C1 corner
+                ConnectVent("VB" + b + "_Str", bX[b], vY, bvStart, bX[b], vY, bCor1Z[b] - hvW); ventSegs++;
+
+                // C1: turn from Z into X direction
+                if (goLeft_v)
+                    AddVentCorner("VJ_B" + b + "_C1", bX[b], vY, bCor1Z[b], false, true, false, true);
+                else
+                    AddVentCorner("VJ_B" + b + "_C1", bX[b], vY, bCor1Z[b], false, true, true, false);
+
+                // Side shaft (runs in X)
+                if (goLeft_v)
+                {
+                    ConnectVent("VB" + b + "_Side", bX[b] - hvW, vY, bCor1Z[b], bCor2X[b] + hvW, vY, bCor1Z[b]); ventSegs++;
+                    AddVentCorner("VJ_B" + b + "_C2", bCor2X[b], vY, bCor1Z[b], true, false, true, false);
+                }
+                else
+                {
+                    ConnectVent("VB" + b + "_Side", bX[b] + hvW, vY, bCor1Z[b], bCor2X[b] - hvW, vY, bCor1Z[b]); ventSegs++;
+                    AddVentCorner("VJ_B" + b + "_C2", bCor2X[b], vY, bCor1Z[b], true, false, false, true);
+                }
+
+                // Forward from C2 toward terminal room (no Fin corridor — straight to terminal)
+                float lFinSv = bCor1Z[b] + hvW;
+                if (bTermExists[b])
+                {
+                    ConnectVent("VB" + b + "_Fin1", bCor2X[b], vY, lFinSv, bCor2X[b], vY, bTermCZ[b] - hvW); ventSegs++;
+                    AddVentElbow("VElbow_Term" + b, bCor2X[b], vY, bTermCZ[b], false, false, true, true);
+                    float termDeep_L = bTermBk[b] + bTermD[b] - 1f;
+                    ConnectVent("VB" + b + "_Run", bCor2X[b], vY, bTermCZ[b] + hvW, bCor2X[b], vY, termDeep_L); ventSegs++;
+                    AddVentCap("VentCap_Term" + b, bCor2X[b], vY, termDeep_L);
+                    AddVentVertical("VDrop_Term" + b, bCor2X[b], dropY, bTermCZ[b], dropW, dropH, dropW);
+                    CutCeilingForVent(termGen[b], dropW, dropW); ventCutsMade++;
+                }
+                else
+                {
+                    float lCapZ = bTermBk[b] - hvW;
+                    ConnectVent("VB" + b + "_Fin1", bCor2X[b], vY, lFinSv, bCor2X[b], vY, lCapZ); ventSegs++;
+                    AddVentCap("VentCap_Term" + b, bCor2X[b], vY, lCapZ);
+                }
+            }
         }
 
         // ════════════════════════════════════════════════════════
         //  PHASE 5 — PROP SCATTERING
         //  Props are only placed in rooms that were built.
         // ════════════════════════════════════════════════════════
+        Debug.Log("[ProcGen:AI] <b>── PHASE 5: Prop Scattering ──</b>");
 
         // Dock
         AddProp("DockCrate_1",
@@ -2087,6 +2338,7 @@ public class ShipLayoutGenerator : MonoBehaviour
         //  room, or due to floating-point edge cases), add a
         //  fallback seal so the room is properly enclosed.
         // ════════════════════════════════════════════════════════
+        Debug.Log("[ProcGen:AI] <b>── PHASE 6: Final Validation ──</b>");
         int ceilFixes = 0;
         for (int i = 0; i < transform.childCount; i++)
         {
@@ -2288,11 +2540,15 @@ public class ShipLayoutGenerator : MonoBehaviour
         }
 
         if (overlapCount > 0 || gapCount > 0 || corridorOverlaps > 0)
+        {
             Debug.LogError(string.Format(
-                "[ProcGen:Diag] LAYOUT ISSUES DETECTED — {0} overlaps, {1} gaps, {2} corridor intersections.",
+                "[ProcGen:Diag] <color=#ff4444><b>✗ LAYOUT ISSUES DETECTED</b></color> — {0} overlaps | {1} gaps | {2} corridor intersections.",
                 overlapCount, gapCount, corridorOverlaps));
+            if (corridorOverlaps > 0)
+                Debug.LogError("[ProcGen:Diag]   <b>⚠ CORRIDOR INTERSECTIONS FOUND</b> — this will trigger auto-retry.");
+        }
         else
-            Debug.Log("[ProcGen:Diag] Layout validation passed — no overlaps or gaps detected.");
+            Debug.Log("[ProcGen:Diag] <color=#00ff88><b>✓ Validation passed</b></color> — no overlaps or gaps detected.");
 
         // ════════════════════════════════════════════════════════════════
         //  AUTO-RETRY — if the layout is too broken (no rooms placed, or
@@ -2323,16 +2579,53 @@ public class ShipLayoutGenerator : MonoBehaviour
             Debug.LogWarning("[ProcGen] Exhausted " + maxRetries + " retries. Using last generated layout.");
         _procRetries = 0;
 
+        // Tally branch patterns for stats and summary
+        int _finalZC = 0, _finalLC = 0, _finalSC = 0, _termCapped = 0;
+        for (int b = 0; b < branchCount; b++)
+        {
+            if (bPat[b] == 1) _finalZC++;
+            else if (bPat[b] == 2) _finalLC++;
+            else _finalSC++;
+            if (!bTermExists[b]) _termCapped++;
+        }
+
+        // Write last-generation statistics for ShipLayoutTrainer / ShipLayoutScorer
+        LastRoomsPlaced      = roomsPlaced;
+        LastRoomsSkipped     = roomsSkipped;
+        LastOverlapCount     = overlapCount;
+        LastGapCount         = gapCount;
+        LastCorridorOverlaps = corridorOverlaps;
+        LastZShapeCount      = _finalZC;
+        LastLShapeCount      = _finalLC;
+        LastStraightCount    = _finalSC;
+        LastBranchCount      = branchCount;
+        LastVentCutsMade     = ventCutsMade;
+        LastTerminalsCapped  = _termCapped;
+        LastActualSeed       = actualSeed;
+
+        string _sep2 = new string('─', 52);
+        Debug.Log("[ProcGen:AI] " + _sep2);
         Debug.Log(string.Format(
-            "[ProcGen] Ship ready! Seed={0} | Spine={1} corridors | CargoBay after cor{2} | " +
-            "Branches={3} (bridge on branch {4}) | " +
-            "Rooms: {5} placed / {6} skipped | " +
-            "Vent segments={7} | Vent ceiling cuts={8} | Fallback ceiling seals={9} | " +
-            "Diagnostics: {10} overlaps, {11} gaps, {12} corridor intersections",
-            actualSeed, spineCount, cargoAfterIdx - 1,
-            branchCount, bridgeBranch,
-            roomsPlaced, roomsSkipped,
-            ventSegs, ventCutsMade, ceilFixes,
-            overlapCount, gapCount, corridorOverlaps));
+            "[ProcGen:AI] <b>GENERATION COMPLETE</b>  Seed={0}{1}",
+            actualSeed, _procRetries > 0 ? "  (retry " + _procRetries + ")" : ""));
+        Debug.Log(string.Format(
+            "[ProcGen:AI]   Spine  : {0} corridors | CargoBay after cor{1}",
+            spineCount, cargoAfterIdx - 1));
+        Debug.Log(string.Format(
+            "[ProcGen:AI]   Rooms  : <color=#00ff88>{0} placed</color> / <color=#ff4444>{1} skipped</color>",
+            roomsPlaced, roomsSkipped));
+        Debug.Log(string.Format(
+            "[ProcGen:AI]   Branches ({0}): <color=#00ff88>{1}×Z-shape</color> | <color=#ffcc00>{2}×L-shape</color> | <color=#ff9988>{3}×straight</color> | {4} terminal(s) capped",
+            branchCount, _finalZC, _finalLC, _finalSC, _termCapped));
+        Debug.Log(string.Format(
+            "[ProcGen:AI]   Vents  : {0} segments | {1} ceiling cuts | {2} fallback seals",
+            ventSegs, ventCutsMade, ceilFixes));
+        if (overlapCount == 0 && gapCount == 0 && corridorOverlaps == 0)
+            Debug.Log("[ProcGen:AI]   Diagnostics: <color=#00ff88><b>✓ CLEAN — no overlaps, gaps, or corridor intersections</b></color>");
+        else
+            Debug.Log(string.Format(
+                "[ProcGen:AI]   Diagnostics: <color=#ff4444>{0} overlap(s)</color> | <color=#ff4444>{1} gap(s)</color> | <color=#ff4444>{2} corridor intersection(s)</color>",
+                overlapCount, gapCount, corridorOverlaps));
+        Debug.Log("[ProcGen:AI] " + _sep2);
     }
 }
