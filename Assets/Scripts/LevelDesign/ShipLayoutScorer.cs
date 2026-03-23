@@ -119,9 +119,9 @@ public static class ShipLayoutScorer
         }
 
         // Level-scaled minimum requirements
-        if (trainingLevel > 50  && s.RoomsPlaced < 3)  score -= 5f;
-        if (trainingLevel > 100 && s.RoomsPlaced < 5)  score -= 8f;
-        if (trainingLevel > 150 && s.BranchCount < 2)  score -= 5f;
+        if (trainingLevel > 80  && s.RoomsPlaced < 3)  score -= 5f;
+        if (trainingLevel > 120 && s.RoomsPlaced < 5)  score -= 8f;
+        if (trainingLevel > 160 && s.BranchCount < 2)  score -= 5f;
 
         s.Total = score;
         return s;
