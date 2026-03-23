@@ -36,6 +36,18 @@ public class ShipLayoutGenerator : MonoBehaviour
     [System.NonSerialized] public int LastVentCutsMade;
     [System.NonSerialized] public int LastTerminalsCapped;
     [System.NonSerialized] public int LastActualSeed;
+    // Structural detail stats used by the scorer for anti-exploit rewards
+    [System.NonSerialized] public bool LastEngReactorPlaced;
+    [System.NonSerialized] public bool LastEngLabPlaced;
+    [System.NonSerialized] public int  LastRoomsLeftCount;
+    [System.NonSerialized] public int  LastRoomsRightCount;
+
+    /// <summary>
+    /// Set by ShipLayoutTrainer before each evaluation to scale procedural map complexity
+    /// to match the current training generation (generation 1 = small map, gen 150+ = large map).
+    /// 0 = no scaling (use full random ranges).
+    /// </summary>
+    [System.NonSerialized] public int currentTrainingLevel = 0;
 
     private float HalfCor { get { return corridorWidth / 2f; } }
     private float ventW = 0.9f;
@@ -275,7 +287,8 @@ public class ShipLayoutGenerator : MonoBehaviour
         AddVentVertical("VDrop_Lab", labX, dropY, engZ, dropW, dropH, dropW);
         CutCeilingForVent(labGen, dropW, dropW);
         AddVentVertical("VDrop_Dock", 0, dropY, dockZ, dropW, dropH, dropW);
-        CutCeilingForVent(dockGen, dropW, dropW);
+        // Note: DockingBay is a large hub room — the vent shaft runs ABOVE its ceiling
+        // and does NOT drop down into it, so we intentionally do NOT cut a ceiling hole here.
 
         ConnectVent("VL_EngToStr", -hvW, vY, engFront, corCStrX + hvW, vY, engFront);
         AddVentTee("VJ_CorCStart", corCStrX, vY, corCStrBack, true, false, true, false);
@@ -1062,18 +1075,35 @@ public class ShipLayoutGenerator : MonoBehaviour
         float cargoH  = RngRange(rng, 3.5f, 5f);
         float engW    = RngRange(rng, 10f, 14f);
         float engD    = RngRange(rng,  9f, 12f);
-        float engH    = RngRange(rng,  4f,  5f);
+        // Clamp engH to be at least roomHeight + ventH + kMinVentPanelH so that the vent-band top
+        // panel always has positive height and is never silently skipped by the > 0.01f guard.
+        const float kMinVentPanelH = 0.1f;
+        float engH    = Mathf.Max(RngRange(rng,  4f,  5f), roomHeight + ventH + kMinVentPanelH);
         float bridgeW = RngRange(rng,  9f, 12f);
         float bridgeD = RngRange(rng,  7f, 10f);
 
-        int   spineCount    = rng.Next(2, 6);
+        // Level-scaled complexity: generation/level determines map size.
+        // Level 0 (no scaling) uses full random ranges.
+        // Tiers:  lvl 1–50  = small   (fewer corridors, 1 branch, small pool)
+        //         lvl 51–100 = medium  (more corridors, up to 2 branches)
+        //         lvl 101–150 = large  (full corridors, up to 3 branches)
+        //         lvl 151+   = full range (same as unscaled)
+        int lvl = currentTrainingLevel;
+        int spineMaxExcl = lvl <= 0 ? 6
+                         : lvl <= 50  ? 3    // rng.Next(2,3) = always 2
+                         : lvl <= 100 ? 4    // rng.Next(2,4) = 2..3
+                         : lvl <= 150 ? 5    // rng.Next(2,5) = 2..4
+                         : 6;               // rng.Next(2,6) = 2..5
+        int   spineCount    = rng.Next(2, spineMaxExcl);
         // cargoAfterIdx: insert cargo after corridor [cargoAfterIdx-1].
         // Using spineCount (exclusive upper) ensures at least one corridor
         // always follows the CargoBay before Engineering.
         int   cargoAfterIdx = rng.Next(1, spineCount);
+        float sLenMin = lvl > 0 && lvl <= 50 ? 4f : 6f;
+        float sLenMax = lvl > 0 && lvl <= 50 ? 9f : 14f;
         float[] sLen = new float[spineCount];
         for (int i = 0; i < spineCount; i++)
-            sLen[i] = RngRange(rng, 6f, 14f);
+            sLen[i] = RngRange(rng, sLenMin, sLenMax);
 
         float dockZ  = 0f;
         float dockFr = dockD / 2f;
@@ -1097,8 +1127,12 @@ public class ShipLayoutGenerator : MonoBehaviour
         float engCZ = engBk + engD / 2f;
         float engFr = engBk + engD;
 
-        // Branch geometry
-        int branchCount = rng.Next(1, 4);
+        // Branch geometry — scale branch count with training level
+        int branchMaxExcl = lvl <= 0 ? 4
+                           : lvl <= 50  ? 2    // rng.Next(1,2) = always 1
+                           : lvl <= 100 ? 3    // rng.Next(1,3) = 1..2
+                           : 4;               // rng.Next(1,4) = 1..3
+        int branchCount = rng.Next(1, branchMaxExcl);
         float[] bX       = new float[branchCount];
         int[]   bPat     = new int[branchCount];    // 0=straight, 1=Z-shaped, 2=L-shaped
         int[]   bSideDir = new int[branchCount];    // -1=turn left, +1=turn right
@@ -1383,7 +1417,10 @@ public class ShipLayoutGenerator : MonoBehaviour
         };
         float[] pRW = { 6f, 4f, 5f, 6f, 4f, 5f, 5f, 7f, 6f, 6f };
         float[] pRD = { 5f, 4f, 4f, 5f, 4f, 5f, 4f, 5f, 6f, 5f };
-        int poolSize = pName.Length;
+        int poolSize = lvl <= 0 ? pName.Length
+                     : lvl <= 50  ? Mathf.Min(3, pName.Length)
+                     : lvl <= 100 ? Mathf.Min(6, pName.Length)
+                     : pName.Length;
         int[] pidx = new int[poolSize];
         for (int i = 0; i < poolSize; i++) pidx[i] = i;
         for (int i = poolSize - 1; i > 0; i--)
@@ -2602,6 +2639,16 @@ public class ShipLayoutGenerator : MonoBehaviour
         LastVentCutsMade     = ventCutsMade;
         LastTerminalsCapped  = terminalsCapped;
         LastActualSeed       = actualSeed;
+
+        // Structural detail stats for scorer anti-exploit rewards
+        LastEngReactorPlaced = engHR;
+        LastEngLabPlaced     = engHL;
+        int leftRooms = 0, rightRooms = 0;
+        for (int i = 0; i < spineCount; i++) { if (sHL[i]) leftRooms++; if (sHR[i]) rightRooms++; }
+        for (int b = 0; b < branchCount; b++) { if (bHL[b]) leftRooms++; if (bHR[b]) rightRooms++; }
+        if (engHL) leftRooms++; if (engHR) rightRooms++;
+        LastRoomsLeftCount  = leftRooms;
+        LastRoomsRightCount = rightRooms;
 
         string summarySep = new string('─', 52);
         Debug.Log("[ProcGen:AI] " + summarySep);

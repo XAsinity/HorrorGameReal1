@@ -20,11 +20,12 @@ using UnityEditor;
 ///
 /// ── USAGE ─────────────────────────────────────────────────────────────────
 ///  • Right-click the component → "Train Layout AI (100 generations)"
-///  • Right-click the component → "Train Layout AI (1000 generations)"
+///  • Right-click the component → "Train Layout AI (200 generations)"
 ///  • Right-click the component → "Evaluate Current Params (100 seeds)"
 ///
-/// The trainer logs detailed progress to the Unity console with color highlights
-/// so you can watch the AI learn in real time.
+/// The trainer shows a cancelable progress bar so you can stop early.
+/// A checkpoint is saved every 50 generations so progress is not lost
+/// if Unity crashes mid-run.
 /// </summary>
 [ExecuteInEditMode]
 public class ShipLayoutTrainer : MonoBehaviour
@@ -75,8 +76,8 @@ public class ShipLayoutTrainer : MonoBehaviour
     [ContextMenu("Train Layout AI (100 generations)")]
     public void Train100() => RunTraining(100);
 
-    [ContextMenu("Train Layout AI (1000 generations)")]
-    public void Train1000() => RunTraining(1000);
+    [ContextMenu("Train Layout AI (200 generations)")]
+    public void Train200() => RunTraining(200);
 
     [ContextMenu("Evaluate Current Params (100 seeds)")]
     public void EvalCurrent100() => EvaluateCurrentParams(100);
@@ -121,11 +122,27 @@ public class ShipLayoutTrainer : MonoBehaviour
         float[] bestGenome = (float[])pop[0].Clone();
 
         // ── Generation loop ────────────────────────────────────────────────
+        bool cancelled = false;
         for (int gen = 0; gen < generations; gen++)
         {
-            // Evaluate each individual
+#if UNITY_EDITOR
+            // Update cancellable progress bar — shows real progress and lets the user cancel
+            float progress = (float)gen / generations;
+            string barInfo = string.Format("Generation {0}/{1} — Best Fitness: {2:F3}",
+                gen + 1, generations, float.IsNegativeInfinity(bestEver) ? 0f : bestEver);
+            if (EditorUtility.DisplayCancelableProgressBar("Training Layout AI", barInfo, progress))
+            {
+                Debug.LogWarning(string.Format(
+                    "[ProcGen:Train] <color=#ff9900>Training cancelled by user at generation {0}/{1}.</color>  Best fitness so far: {2:F1}",
+                    gen + 1, generations, float.IsNegativeInfinity(bestEver) ? 0f : bestEver));
+                cancelled = true;
+                break;
+            }
+#endif
+
+            // Evaluate each individual — pass generation as training level for level-scaled complexity
             for (int i = 0; i < populationSize; i++)
-                fitnesses[i] = EvaluateGenome(pop[i], seedsPerIndividual, rng);
+                fitnesses[i] = EvaluateGenome(pop[i], seedsPerIndividual, rng, gen + 1);
 
             // Sort descending by fitness
             System.Array.Sort(fitnesses, pop,
@@ -151,6 +168,15 @@ public class ShipLayoutTrainer : MonoBehaviour
                     gen + 1, generations, best, avg, worst));
             }
 
+            // Checkpoint save every 50 generations so progress is not lost on a crash
+            if ((gen + 1) % 50 == 0)
+            {
+                Debug.Log(string.Format(
+                    "[ProcGen:Train] <color=#aaddff>Checkpoint save at generation {0} — best fitness {1:F1}</color>",
+                    gen + 1, bestEver));
+                SaveBestParams(bestGenome, bestEver, (gen + 1) * populationSize * seedsPerIndividual, gen + 1);
+            }
+
             // Selection + reproduction
             int survivors = Mathf.Max(2, populationSize / 2);
             // Elites (top 10%) survive unchanged
@@ -165,10 +191,15 @@ public class ShipLayoutTrainer : MonoBehaviour
             }
         }
 
+#if UNITY_EDITOR
+        EditorUtility.ClearProgressBar();
+#endif
+
         Debug.Log("[ProcGen:Train] " + separator);
+        string completionLabel = cancelled ? "TRAINING CANCELLED" : "TRAINING COMPLETE";
         Debug.Log(string.Format(
-            "[ProcGen:Train] <b>TRAINING COMPLETE</b>  best fitness={0:F1}  ({1} gens × {2} individuals × {3} seeds = {4} total layouts evaluated)",
-            bestEver, generations, populationSize, seedsPerIndividual,
+            "[ProcGen:Train] <b>{0}</b>  best fitness={1:F1}  ({2} gens × {3} individuals × {4} seeds = {5} total layouts evaluated)",
+            completionLabel, bestEver, generations, populationSize, seedsPerIndividual,
             generations * populationSize * seedsPerIndividual));
         Debug.Log("[ProcGen:Train] " + separator);
 
@@ -199,18 +230,20 @@ public class ShipLayoutTrainer : MonoBehaviour
     //  Core: evaluate one genome across N seeds
     // ══════════════════════════════════════════════════════════════════════
 
-    private float EvaluateGenome(float[] genome, int seeds, System.Random rng)
+    private float EvaluateGenome(float[] genome, int seeds, System.Random rng, int trainingLevel = 0)
     {
         ApplyGenome(genome);
+        _gen.currentTrainingLevel = trainingLevel;
         float total = 0f;
         for (int s = 0; s < seeds; s++)
         {
             _gen.seed = rng.Next(1, int.MaxValue);
             _gen.GenerateShipLayout();
-            var score = ShipLayoutScorer.Evaluate(_gen);
+            var score = ShipLayoutScorer.Evaluate(_gen, trainingLevel);
             total += score.Total;
             CleanupChildren();
         }
+        _gen.currentTrainingLevel = 0;
         return total / seeds;
     }
 
