@@ -279,6 +279,7 @@ public class ShipLayoutTrainer : MonoBehaviour
     {
         ApplyGenome(genome);
         _gen.currentTrainingLevel = trainingLevel;
+        _gen.scoringOnly = true;   // skip ProBuilder geometry — only placement stats needed
         float total = 0f;
         int evaluated = 0;
         for (int s = 0; s < seeds; s++)
@@ -295,6 +296,7 @@ public class ShipLayoutTrainer : MonoBehaviour
             evaluated++;
             CleanupChildren();
         }
+        _gen.scoringOnly = false;  // restore geometry creation for non-training use
         _gen.currentTrainingLevel = 0;
         // Return 0 when no seeds were evaluated (cancel triggered before first seed).
         // 0 is a sensible neutral score here: it won't pollute the best-ever tracker
@@ -491,10 +493,12 @@ public class ShipLayoutTrainer : MonoBehaviour
 
     /// <summary>
     /// Remove all generated geometry children (uses DestroyImmediate so it works in Edit Mode).
+    /// In scoringOnly mode no children were created, so this is a safe no-op.
     /// </summary>
     private void CleanupChildren()
     {
         if (_gen == null) return;
+        if (_gen.scoringOnly) return;  // no geometry was created; nothing to destroy
         Transform t = _gen.transform;
         for (int i = t.childCount - 1; i >= 0; i--)
             DestroyImmediate(t.GetChild(i).gameObject);
