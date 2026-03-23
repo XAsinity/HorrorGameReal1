@@ -24,6 +24,7 @@ public static class ShipLayoutScorer
     private const float W_CORRIDOR_OVERLAP  = -25f;  // each corridor-vs-corridor intersection (severe)
     private const float W_ALL_CLEAN         = +15f;  // bonus for zero diagnostics
     private const float W_FULL_ROOMS        = +10f;  // bonus when no rooms are skipped
+
     private const float W_MIXED_PATTERNS    = +5f;   // bonus for having at least one each of Z + non-Z
     private const float W_PATTERN_MONOTONY  = -8f;   // penalty when ALL branches share the same pattern
 
@@ -33,6 +34,11 @@ public static class ShipLayoutScorer
     private const float W_BALANCED_SIDES    = +4f;   // rooms placed on both left and right of corridors
     private const float W_TERMINAL_RATIO    = +5f;   // at least 50% of branches have a terminal room
     private const float W_BRANCH_VARIETY    = +3f;   // at least 2 different patterns among 3 branches
+
+    // Scale-aware rewards (new)
+    private const float W_ROOM_RATIO        = +20f;  // multiplier: (placed / (placed+skipped)) × this
+    private const float W_BUDGET_MET        = +10f;  // bonus when rooms placed ≥ 80 % of target budget
+    private const float W_DEAD_END          = -2f;   // mild penalty per capped corridor (dead-end)
 
     // ── Public API ────────────────────────────────────────────────────────────
 
@@ -53,6 +59,8 @@ public static class ShipLayoutScorer
         s.VentCutsMade      = gen.LastVentCutsMade;
         s.TerminalsCapped   = gen.LastTerminalsCapped;
         s.ActualSeed        = gen.LastActualSeed;
+        s.TargetRoomCount   = gen.LastTargetRoomCount;
+        s.DeadEndCount      = gen.LastDeadEndCount;
 
         // Base score
         float score = 0f;
@@ -66,6 +74,25 @@ public static class ShipLayoutScorer
         score += s.OverlapCount     * W_OVERLAP;
         score += s.GapCount         * W_GAP;
         score += s.CorridorOverlaps * W_CORRIDOR_OVERLAP;
+
+        // ── Scale-aware rewards ──────────────────────────────────────────────
+        // Room placement ratio — reward high success rate regardless of map size
+        int totalAttempted = s.RoomsPlaced + s.RoomsSkipped;
+        if (totalAttempted > 0)
+        {
+            float roomRatio = (float)s.RoomsPlaced / totalAttempted;
+            score += roomRatio * W_ROOM_RATIO;
+        }
+
+        // Budget ratio — reward actually meeting the level's target room count
+        if (s.TargetRoomCount > 0)
+        {
+            float budgetRatio = (float)s.RoomsPlaced / s.TargetRoomCount;
+            if (budgetRatio >= 0.8f) score += W_BUDGET_MET;
+        }
+
+        // Dead-end penalty — corridors capped without terminal rooms reduce score mildly
+        score += s.DeadEndCount * W_DEAD_END;
 
         // Bonus awards
         bool clean = (s.OverlapCount == 0 && s.GapCount == 0 && s.CorridorOverlaps == 0);
@@ -118,10 +145,16 @@ public static class ShipLayoutScorer
                 score += W_TERMINAL_RATIO;
         }
 
-        // Level-scaled minimum requirements
-        if (trainingLevel > 80  && s.RoomsPlaced < 3)  score -= 5f;
-        if (trainingLevel > 120 && s.RoomsPlaced < 5)  score -= 8f;
-        if (trainingLevel > 160 && s.BranchCount < 2)  score -= 5f;
+        // ── Level-scaled minimum requirements (budget-relative thresholds) ──
+        // Use TargetRoomCount to scale with the current level's room budget rather than
+        // fixed magic numbers (previously hardcoded as 3/5 regardless of map size).
+        int minRoomsForMediumTier = Mathf.Max(3, s.TargetRoomCount / 5);
+        int minRoomsForLargeTier  = Mathf.Max(5, s.TargetRoomCount / 3);
+        // Thresholds align with budget-based tiers in the generator:
+        //   lvl > 80  → medium complexity,  lvl > 120 → large,  lvl > 160 → full
+        if (trainingLevel > 80  && s.RoomsPlaced < minRoomsForMediumTier) score -= 5f;
+        if (trainingLevel > 120 && s.RoomsPlaced < minRoomsForLargeTier)  score -= 8f;
+        if (trainingLevel > 160 && s.BranchCount < 2)                     score -= 5f;
 
         s.Total = score;
         return s;
@@ -134,9 +167,9 @@ public static class ShipLayoutScorer
         string color = s.Total >= 50f ? "#00ff88" : s.Total >= 0f ? "#ffcc00" : "#ff4444";
         Debug.Log(string.Format(
             "[ProcGen:Score]{0} <color={1}><b>Score={2:F1}</b></color>  " +
-            "rooms:{3}+/{4}-  branches:{5}Z/{6}L/{7}S  caps:{8}  diag:{9}ov/{10}gap/{11}cor",
+            "rooms:{3}+/{4}-  target:{5}  branches:{6}Z/{7}L/{8}S  caps:{9}  diag:{10}ov/{11}gap/{12}cor",
             tag, color, s.Total,
-            s.RoomsPlaced, s.RoomsSkipped,
+            s.RoomsPlaced, s.RoomsSkipped, s.TargetRoomCount,
             s.ZShapeCount, s.LShapeCount, s.StraightCount,
             s.TerminalsCapped,
             s.OverlapCount, s.GapCount, s.CorridorOverlaps));
@@ -160,10 +193,13 @@ public static class ShipLayoutScorer
         public int   VentCutsMade;
         public int   TerminalsCapped;
         public int   ActualSeed;
+        // Scale-aware fields
+        public int   TargetRoomCount;
+        public int   DeadEndCount;
 
         public override string ToString() =>
-            string.Format("Score={0:F1} rooms={1}/{2} Z={3} L={4} S={5} caps={6} diag={7}/{8}/{9}",
-                Total, RoomsPlaced, RoomsPlaced + RoomsSkipped,
+            string.Format("Score={0:F1} rooms={1}/{2} target={3} Z={4} L={5} S={6} caps={7} diag={8}/{9}/{10}",
+                Total, RoomsPlaced, RoomsPlaced + RoomsSkipped, TargetRoomCount,
                 ZShapeCount, LShapeCount, StraightCount, TerminalsCapped,
                 OverlapCount, GapCount, CorridorOverlaps);
     }

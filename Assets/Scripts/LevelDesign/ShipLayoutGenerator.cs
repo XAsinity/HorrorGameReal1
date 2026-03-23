@@ -48,6 +48,9 @@ public class ShipLayoutGenerator : MonoBehaviour
     [System.NonSerialized] public bool LastEngLabPlaced;
     [System.NonSerialized] public int  LastRoomsLeftCount;
     [System.NonSerialized] public int  LastRoomsRightCount;
+    // Scale-aware stats — written by GenerateProceduralLayout for the scale-aware scorer
+    [System.NonSerialized] public int LastTargetRoomCount;   // budget target rooms
+    [System.NonSerialized] public int LastDeadEndCount;      // corridors capped without a terminal room
 
     /// <summary>
     /// Set by ShipLayoutTrainer before each evaluation to scale procedural map complexity
@@ -1110,6 +1113,37 @@ public class ShipLayoutGenerator : MonoBehaviour
         var bds = new System.Collections.Generic.List<Vector4>();
         int roomsPlaced = 0, roomsSkipped = 0, ventSegs = 0, ventCutsMade = 0;
 
+        // ── Resolve trainedParams with fallback defaults ──────────────────────
+        // All structural decisions (bias, counts, budget) flow through these local
+        // variables so the generator works correctly whether or not trainedParams
+        // has been assigned by the trainer.
+        int   tp_baseRoomBudget    = trainedParams != null ? trainedParams.baseRoomBudget    : 5;
+        float tp_roomBudgetPerLvl  = trainedParams != null ? trainedParams.roomBudgetPerLevel: 0.15f;
+        float tp_engSideRoomBias   = trainedParams != null ? trainedParams.engSideRoomBias   : 0.65f;
+        float tp_branchSideRoomBias= trainedParams != null ? trainedParams.branchSideRoomBias: 0.60f;
+        float tp_zShapeBias        = trainedParams != null ? trainedParams.zShapeBias        : 0.50f;
+        float tp_lShapeBias        = trainedParams != null ? trainedParams.lShapeBias        : 0.30f;
+        float tp_branchChance      = trainedParams != null ? trainedParams.branchChance      : 0.30f;
+        int   tp_maxBranchDepth    = trainedParams != null ? trainedParams.maxBranchDepth    : 3;
+        float tp_sideRoomChance    = trainedParams != null ? trainedParams.sideRoomChance    : 0.60f;
+        float tp_doubleSideChance  = trainedParams != null ? trainedParams.doubleSideChance  : 0.40f;
+
+        // Z-shape / L-shape / straight cumulative thresholds for the pattern roll:
+        //   [0, zBias)          → Z-shape (1)
+        //   [zBias, zBias+lBias)→ L-shape (2)
+        //   [zBias+lBias, 1)    → straight (0)
+        // Clamp so the combined total never exceeds 1.
+        float tp_zBiasCeil  = Mathf.Clamp01(tp_zShapeBias);
+        float tp_lBiasCeil  = Mathf.Clamp01(tp_zShapeBias + tp_lShapeBias);
+
+        // ── Room budget: base + level scaling ─────────────────────────────────
+        // At level 0 (no scaling) use a generous budget so full-complexity maps are
+        // generated.  At level 1 the budget starts small and grows with level.
+        int lvl = currentTrainingLevel;
+        int roomBudget = (lvl <= 0)
+            ? (tp_baseRoomBudget + (int)(200f * tp_roomBudgetPerLvl))   // level-0 = max budget
+            : Mathf.Max(tp_baseRoomBudget, tp_baseRoomBudget + (int)(lvl * tp_roomBudgetPerLvl));
+
         // ════════════════════════════════════════════════════════
         //  PHASE 1 — SPINE TOPOLOGY
         //  Randomise dimensions, corridor chain, cargo position,
@@ -1133,25 +1167,24 @@ public class ShipLayoutGenerator : MonoBehaviour
         float bridgeW = RngRange(rng,  9f, 12f);
         float bridgeD = RngRange(rng,  7f, 10f);
 
-        // Level-scaled complexity: generation/level determines map size.
-        // Level 0 (no scaling) uses full random ranges.
-        // Tiers:  lvl 1–30  = early   (2 spines, 1 branch, 2 room types, short corridors)
-        //         lvl 31–80 = medium  (2–3 spines, 1 branch, 4 room types)
-        //         lvl 81–150 = large  (2–4 spines, 1–2 branches, 7 room types)
-        //         lvl 151+  = full range (same as unscaled)
-        int lvl = currentTrainingLevel;
-        int spineMaxExcl = lvl <= 0  ? 6
-                         : lvl <= 30  ? 3    // rng.Next(2,3) = always 2
-                         : lvl <= 80  ? 4    // rng.Next(2,4) = 2..3
-                         : lvl <= 150 ? 5    // rng.Next(2,5) = 2..4
-                         : 6;               // rng.Next(2,6) = 2..5
-        int   spineCount    = rng.Next(2, spineMaxExcl);
+        // ── Spine count: derived from room budget ─────────────────────────────
+        // Each spine corridor "costs" about 2 room-budget units (the corridor itself
+        // + at least one side room at medium levels).  Clamp to a sane range.
+        // At small budgets (<10) use 2 corridors; scale up to 5 at large budgets.
+        int spineCount = roomBudget <= 0  ? rng.Next(2, 6)
+                       : roomBudget <= 8  ? 2
+                       : roomBudget <= 14 ? rng.Next(2, 4)    // 2–3
+                       : roomBudget <= 22 ? rng.Next(2, 5)    // 2–4
+                       : rng.Next(2, 6);                      // 2–5
         // cargoAfterIdx: insert cargo after corridor [cargoAfterIdx-1].
         // Using spineCount (exclusive upper) ensures at least one corridor
         // always follows the CargoBay before Engineering.
         int   cargoAfterIdx = rng.Next(1, spineCount);
-        float sLenMin = lvl > 0 && lvl <= 40 ? 4f : 6f;
-        float sLenMax = lvl > 0 && lvl <= 40 ? 8f : 14f;
+        // ── Corridor lengths from trainedParams ranges ────────────────────────
+        float sLenMin = (trainedParams != null) ? trainedParams.spineLenRange.x : 6f;
+        float sLenMax = (trainedParams != null) ? trainedParams.spineLenRange.y : 14f;
+        // Cap lengths at small budgets so early-training maps stay compact.
+        if (lvl > 0 && roomBudget <= 8) { sLenMin = Mathf.Min(sLenMin, 4f); sLenMax = Mathf.Min(sLenMax, 8f); }
         float[] sLen = new float[spineCount];
         for (int i = 0; i < spineCount; i++)
             sLen[i] = RngRange(rng, sLenMin, sLenMax);
@@ -1178,12 +1211,18 @@ public class ShipLayoutGenerator : MonoBehaviour
         float engCZ = engBk + engD / 2f;
         float engFr = engBk + engD;
 
-        // Branch geometry — scale branch count with training level
-        int branchMaxExcl = lvl <= 0  ? 4
-                           : lvl <= 50  ? 2    // rng.Next(1,2) = always 1
-                           : lvl <= 120 ? 3    // rng.Next(1,3) = 1..2
-                           : 4;               // rng.Next(1,4) = 1..3
-        int branchCount = rng.Next(1, branchMaxExcl);
+        // ── Branch count: budget + trainedParams.branchChance ────────────────
+        // branchChance biases the roll toward more branches when high, fewer when low.
+        // maxBranchDepth caps the absolute maximum regardless of budget or bias.
+        int maxBranchesForBudget = roomBudget <= 0  ? 3
+                                 : roomBudget <= 8  ? 1
+                                 : roomBudget <= 14 ? 2
+                                 : 3;
+        int branchUpperBound = Mathf.Clamp(maxBranchesForBudget, 1, tp_maxBranchDepth);
+        // branchChance gates whether we pick 1 branch (low) or up to the cap (high).
+        // At branchChance=0 always 1; at 1.0 always branchUpperBound.
+        int branchLower = Mathf.Max(1, (int)(branchUpperBound * (1f - tp_branchChance)));
+        int branchCount = rng.Next(branchLower, branchUpperBound + 1);
         float[] bX       = new float[branchCount];
         int[]   bPat     = new int[branchCount];    // 0=straight, 1=Z-shaped, 2=L-shaped
         int[]   bSideDir = new int[branchCount];    // -1=turn left, +1=turn right
@@ -1223,10 +1262,22 @@ public class ShipLayoutGenerator : MonoBehaviour
 
         for (int b = 0; b < branchCount; b++)
         {
-            bPat[b]     = rng.Next(2);
-            bStrLen[b]  = RngRange(rng, 4f, 8f);
-            bSideLen[b] = RngRange(rng, 5f, 12f);
-            bFinLen[b]  = RngRange(rng, 5f, 10f);
+            // Initial pattern roll uses trainedParams biases:
+            //   [0, zBiasCeil)         → Z-shape (1)
+            //   [zBiasCeil, lBiasCeil) → L-shape (2)
+            //   [lBiasCeil, 1)         → straight (0)
+            float patRoll = (float)rng.NextDouble();
+            bPat[b]     = patRoll < tp_zBiasCeil ? 1 : (patRoll < tp_lBiasCeil ? 2 : 0);
+            // Use trainedParams Z-shape segment length ranges when available.
+            float strMin  = (trainedParams != null) ? trainedParams.zStrLenRange.x  : 4f;
+            float strMax  = (trainedParams != null) ? trainedParams.zStrLenRange.y  : 8f;
+            float sideMin = (trainedParams != null) ? trainedParams.zSideLenRange.x : 5f;
+            float sideMax = (trainedParams != null) ? trainedParams.zSideLenRange.y : 12f;
+            float finMin  = (trainedParams != null) ? trainedParams.zFinLenRange.x  : 5f;
+            float finMax  = (trainedParams != null) ? trainedParams.zFinLenRange.y  : 10f;
+            bStrLen[b]  = RngRange(rng, strMin,  strMax);
+            bSideLen[b] = RngRange(rng, sideMin, sideMax);
+            bFinLen[b]  = RngRange(rng, finMin,  finMax);
             bSideDir[b] = bX[b] < -0.1f ? -1
                         : bX[b] >  0.1f ? +1
                         : (rng.Next(2) == 0 ? -1 : +1);
@@ -1468,11 +1519,15 @@ public class ShipLayoutGenerator : MonoBehaviour
         };
         float[] pRW = { 6f, 4f, 5f, 6f, 4f, 5f, 5f, 7f, 6f, 6f };
         float[] pRD = { 5f, 4f, 4f, 5f, 4f, 5f, 4f, 5f, 6f, 5f };
-        int poolSize = lvl <= 0  ? pName.Length
-                     : lvl <= 40  ? Mathf.Min(2, pName.Length)   // just 2 room types
-                     : lvl <= 90  ? Mathf.Min(4, pName.Length)   // 4 room types
-                     : lvl <= 140 ? Mathf.Min(7, pName.Length)   // 7 room types
-                     : pName.Length;                              // all room types
+        // Pool size scales with room budget: small budgets expose fewer room types
+        // so the AI can learn a limited set well before unlocking more variety.
+        int poolSize = roomBudget <= 0  ? pName.Length
+                     : roomBudget <= 8  ? Mathf.Min(2, pName.Length)
+                     : roomBudget <= 14 ? Mathf.Min(4, pName.Length)
+                     : roomBudget <= 22 ? Mathf.Min(7, pName.Length)
+                     : pName.Length;
+        // Target room count = budget (used for scorer budget-ratio reward)
+        int targetRoomCount = roomBudget;
         int[] pidx = new int[poolSize];
         for (int i = 0; i < poolSize; i++) pidx[i] = i;
         for (int i = poolSize - 1; i > 0; i--)
@@ -1550,8 +1605,8 @@ public class ShipLayoutGenerator : MonoBehaviour
             // (side rooms are designed to touch/overlap their corridor wall).
             int spineCorBdsIdx = 3 + i;
 
-            // First side candidate — prefer left
-            if (pp < poolSize && rng.NextDouble() > 0.25)
+            // First side candidate — use tp_sideRoomChance (replaces hardcoded 0.75)
+            if (pp < poolSize && rng.NextDouble() < tp_sideRoomChance)
             {
                 int k = pidx[pp];
                 float fcx, fw, fd; bool fLeft;
@@ -1576,11 +1631,12 @@ public class ShipLayoutGenerator : MonoBehaviour
                 }
             }
 
-            // Second side candidate — only attempt the side not yet occupied.
+            // Second side candidate — use tp_doubleSideChance.
+            // Only attempt the side not yet occupied.
             // We do NOT reuse ProcTryPlaceRoom here because that function tries
             // both sides internally, which could collide with the first room.
             // Instead, target exactly the free side with up to 3 size attempts.
-            if (pp < poolSize && rng.NextDouble() > 0.25 && !(sHL[i] && sHR[i]))
+            if (pp < poolSize && rng.NextDouble() < tp_doubleSideChance && !(sHL[i] && sHR[i]))
             {
                 int k = pidx[pp];
                 bool needLeft  = !sHL[i];  // fill the unoccupied side
@@ -1620,7 +1676,7 @@ public class ShipLayoutGenerator : MonoBehaviour
         float  reactW_ = 0f, reactD_ = 0f, labW_ = 0f, labD_ = 0f;
         float  reactX  = 0f, labX   = 0f;
 
-        if (pp < poolSize && rng.NextDouble() > 0.35f)
+        if (pp < poolSize && rng.NextDouble() < tp_engSideRoomBias)
         {
             int k = pidx[pp]; pp++;
             float cx = engW / 2f + pRW[k] / 2f;
@@ -1639,7 +1695,7 @@ public class ShipLayoutGenerator : MonoBehaviour
             }
         }
 
-        if (pp < poolSize && rng.NextDouble() > 0.35f)
+        if (pp < poolSize && rng.NextDouble() < tp_engSideRoomBias)
         {
             int k = pidx[pp]; pp++;
             float cx = -(engW / 2f + pRW[k] / 2f);
@@ -1725,7 +1781,7 @@ public class ShipLayoutGenerator : MonoBehaviour
         for (int b = 0; b < branchCount; b++)
         {
             if (bPat[b] != 1) continue;
-            if (pp < poolSize && rng.NextDouble() > 0.4f)
+            if (pp < poolSize && rng.NextDouble() < tp_branchSideRoomBias)
             {
                 int k = pidx[pp]; pp++;
                 float cx = bCor2X[b] - HalfCor - pRW[k] / 2f;
@@ -1741,7 +1797,7 @@ public class ShipLayoutGenerator : MonoBehaviour
                     roomsSkipped++;
                 }
             }
-            if (pp < poolSize && rng.NextDouble() > 0.4f)
+            if (pp < poolSize && rng.NextDouble() < tp_branchSideRoomBias)
             {
                 int k = pidx[pp]; pp++;
                 float cx = bCor2X[b] + HalfCor + pRW[k] / 2f;
@@ -2691,6 +2747,9 @@ public class ShipLayoutGenerator : MonoBehaviour
         LastVentCutsMade     = ventCutsMade;
         LastTerminalsCapped  = terminalsCapped;
         LastActualSeed       = actualSeed;
+        // Scale-aware stats
+        LastTargetRoomCount  = targetRoomCount;
+        LastDeadEndCount     = terminalsCapped; // corridors capped = dead ends without terminal rooms
 
         // Structural detail stats for scorer anti-exploit rewards
         LastEngReactorPlaced = engHR;
@@ -2708,11 +2767,14 @@ public class ShipLayoutGenerator : MonoBehaviour
             "[ProcGen:AI] <b>GENERATION COMPLETE</b>  Seed={0}{1}",
             actualSeed, _procRetries > 0 ? "  (retry " + _procRetries + ")" : ""));
         Debug.Log(string.Format(
+            "[ProcGen:AI]   Budget : <b>{0} target rooms</b>  (base={1} + lvl{2}×{3:F2})",
+            targetRoomCount, tp_baseRoomBudget, lvl, tp_roomBudgetPerLvl));
+        Debug.Log(string.Format(
             "[ProcGen:AI]   Spine  : {0} corridors | CargoBay after cor{1}",
             spineCount, cargoAfterIdx - 1));
         Debug.Log(string.Format(
-            "[ProcGen:AI]   Rooms  : <color=#00ff88>{0} placed</color> / <color=#ff4444>{1} skipped</color>",
-            roomsPlaced, roomsSkipped));
+            "[ProcGen:AI]   Rooms  : <color=#00ff88>{0} placed</color> / <color=#ff4444>{1} skipped</color>  (budget ratio {2:P0})",
+            roomsPlaced, roomsSkipped, targetRoomCount > 0 ? (float)roomsPlaced / targetRoomCount : 0f));
         Debug.Log(string.Format(
             "[ProcGen:AI]   Branches ({0}): <color=#00ff88>{1}×Z-shape</color> | <color=#ffcc00>{2}×L-shape</color> | <color=#ff9988>{3}×straight</color> | {4} terminal(s) capped",
             branchCount, finalZCount, finalLCount, finalSCount, terminalsCapped));

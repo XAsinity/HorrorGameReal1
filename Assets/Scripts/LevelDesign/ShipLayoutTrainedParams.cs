@@ -43,6 +43,57 @@ public class ShipLayoutTrainedParams : ScriptableObject
     [Range(0f, 1f)] public float branchSideRoomBias = 0.60f;
     [Range(0f, 1f)] public float zShapeBias       = 0.50f; // chance initial roll chooses Z over straight
 
+    // ── Ship Scale (level-driven) ──────────────────────────────────────────
+    [Header("Ship Scale (level-driven)")]
+    [Tooltip("Base room budget at level 1.  Actual budget = baseRoomBudget + level * roomBudgetPerLevel")]
+    public int baseRoomBudget = 5;
+    [Tooltip("Rooms added per level (~35 rooms at level 200 with default 0.15).")]
+    public float roomBudgetPerLevel = 0.15f;
+
+    // ── Room Type Weights ──────────────────────────────────────────────────
+    [Header("Room Type Weights (relative)")]
+    [Tooltip("Relative frequency of spine corridor slots.")]
+    public float weightCorridor = 1.0f;
+    [Tooltip("Relative frequency of large hub rooms (engineering, cargo, dock).")]
+    public float weightHub = 0.5f;
+    [Tooltip("Relative frequency of medium utility rooms.")]
+    public float weightUtility = 0.8f;
+    [Tooltip("Relative frequency of dead-end terminal rooms.")]
+    public float weightTerminal = 0.3f;
+
+    // ── Branching Rules ────────────────────────────────────────────────────
+    [Header("Branching Rules")]
+    [Range(0f, 1f)]
+    [Tooltip("Chance that each available branch slot off engineering is filled.")]
+    public float branchChance = 0.3f;
+    [Range(1, 5)]
+    [Tooltip("Maximum branches that can fork off engineering.")]
+    public int maxBranchDepth = 3;
+    [Range(0f, 1f)]
+    [Tooltip("Chance a spine corridor gets at least one side room.")]
+    public float sideRoomChance = 0.6f;
+    [Range(0f, 1f)]
+    [Tooltip("Chance a corridor with one side room also gets a room on the opposite side.")]
+    public float doubleSideChance = 0.4f;
+
+    // ── Hub Repetition ─────────────────────────────────────────────────────
+    [Header("Hub Repetition")]
+    [Range(0f, 1f)]
+    [Tooltip("Chance of placing an additional engineering hub in the spine.")]
+    public float extraEngChance = 0.2f;
+    [Range(0f, 1f)]
+    [Tooltip("Chance of placing an additional cargo bay in the spine.")]
+    public float extraCargoChance = 0.3f;
+
+    // ── Connection Rules ───────────────────────────────────────────────────
+    [Header("Connection Rules")]
+    [Range(0f, 1f)]
+    [Tooltip("(Reserved for future use) Chance corridors loop back to form a cycle.")]
+    public float loopChance = 0.15f;
+    [Range(0f, 1f)]
+    [Tooltip("Chance an L-shape is attempted before Z-shape for branches (complement of zShapeBias).")]
+    public float lShapeBias = 0.30f;
+
     [Header("Trained Fitness")]
     [Tooltip("Average score across the evaluation seeds — set automatically by ShipLayoutTrainer.")]
     public float trainedFitnessScore = 0f;
