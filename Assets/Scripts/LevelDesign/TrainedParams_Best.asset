@@ -1,0 +1,54 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 719cdd58752d45c0a41eb0bd7fa31314, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::ShipLayoutTrainedParams
+  corridorWidthRange: {x: 2.1478431, y: 3.4130273}
+  corridorHeightRange: {x: 2.7157633, y: 3.7927747}
+  roomHeightRange: {x: 2.937698, y: 3.6111357}
+  spineLenRange: {x: 6, y: 14}
+  dockWRange: {x: 14, y: 18}
+  dockDRange: {x: 10, y: 14}
+  dockHRange: {x: 5, y: 6}
+  cargoWRange: {x: 7, y: 10}
+  cargoDRange: {x: 5, y: 8}
+  cargoHRange: {x: 3.5, y: 5}
+  engWRange: {x: 8.55452, y: 13.073835}
+  engDRange: {x: 7.877589, y: 13.749409}
+  engHRange: {x: 4.2216425, y: 4.351293}
+  branchCountMin: 1
+  branchCountMax: 3
+  zStrLenRange: {x: 9.513322, y: 9.827403}
+  zSideLenRange: {x: 3, y: 12.643532}
+  zFinLenRange: {x: 11.0472355, y: 14}
+  spineRoomBias: 0.575287
+  spineRoom2Bias: 0.75
+  engSideRoomBias: 0.95704967
+  branchSideRoomBias: 0.9310525
+  zShapeBias: 1
+  baseRoomBudget: 7
+  roomBudgetPerLevel: 0.20427781
+  weightCorridor: 0.08072894
+  weightHub: 0
+  weightUtility: 0.60407
+  weightTerminal: 1.9017761
+  branchChance: 0
+  maxBranchDepth: 4
+  sideRoomChance: 0.8759884
+  doubleSideChance: 0.76448476
+  extraEngChance: 0.8363455
+  extraCargoChance: 0.84408206
+  loopChance: 0.26260808
+  lShapeBias: 0
+  trainedFitnessScore: 143.89774
+  evaluationSeedCount: 32000
+  trainedGeneration: 200
