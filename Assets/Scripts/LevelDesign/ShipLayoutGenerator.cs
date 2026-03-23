@@ -59,6 +59,14 @@ public class ShipLayoutGenerator : MonoBehaviour
     /// </summary>
     [System.NonSerialized] public int currentTrainingLevel = 0;
 
+    /// <summary>
+    /// When true, GenerateProceduralLayout() runs all placement and statistics logic but
+    /// skips all ProBuilder geometry creation (rooms, corridors, vents, props, walls).
+    /// Set by ShipLayoutTrainer during evaluation to make training 10-50x faster.
+    /// The Last* statistics fields are still written correctly so ShipLayoutScorer works normally.
+    /// </summary>
+    [System.NonSerialized] public bool scoringOnly = false;
+
     private float HalfCor { get { return corridorWidth / 2f; } }
     private float ventW = 0.9f;
     private float ventH = 0.7f;
@@ -117,10 +125,14 @@ public class ShipLayoutGenerator : MonoBehaviour
     [ContextMenu("Generate Ship Layout")]
     public void GenerateShipLayout()
     {
-        for (int i = transform.childCount - 1; i >= 0; i--)
+        // In scoringOnly mode no geometry was created, so there is nothing to destroy.
+        if (!scoringOnly)
         {
-            if (Application.isPlaying) Destroy(transform.GetChild(i).gameObject);
-            else DestroyImmediate(transform.GetChild(i).gameObject);
+            for (int i = transform.childCount - 1; i >= 0; i--)
+            {
+                if (Application.isPlaying) Destroy(transform.GetChild(i).gameObject);
+                else DestroyImmediate(transform.GetChild(i).gameObject);
+            }
         }
 
         if (proceduralLayout)
@@ -128,6 +140,9 @@ public class ShipLayoutGenerator : MonoBehaviour
             GenerateProceduralLayout();
             return;
         }
+
+        // Hardcoded layout produces no scoring statistics — skip entirely when scoring.
+        if (scoringOnly) return;
 
         float doorWidth = kDoorWidth;
         float doorHeight = kDoorHeight;
@@ -432,6 +447,7 @@ public class ShipLayoutGenerator : MonoBehaviour
 
     private void BuildEngFrontWall(float engW, float engH, float engFrontZ, float leftDoorX, float rightDoorX, float doorOpeningW, float doorH, float doorW)
     {
+        if (scoringOnly) return;
         float wallZ = engFrontZ - wallThickness / 2f;
         float halfEngW = engW / 2f;
         float halfOpening = doorOpeningW / 2f;
@@ -516,6 +532,7 @@ public class ShipLayoutGenerator : MonoBehaviour
 
     private void ConnectVent(string name, float x1, float y1, float z1, float x2, float y2, float z2)
     {
+        if (scoringOnly) return;
         float cx = (x1 + x2) / 2f, cy = (y1 + y2) / 2f, cz = (z1 + z2) / 2f;
         float dx = x2 - x1, dz = z2 - z1;
         float length = Mathf.Sqrt(dx * dx + dz * dz);
@@ -534,6 +551,7 @@ public class ShipLayoutGenerator : MonoBehaviour
 
     private void AddVentVertical(string name, float x, float y, float z, float w, float h, float d)
     {
+        if (scoringOnly) return;
         GameObject obj = new GameObject(name);
         obj.transform.SetParent(transform);
         // After Quaternion.Euler(90,0,0) the shaft's local Y axis maps to World +Z.
@@ -551,6 +569,7 @@ public class ShipLayoutGenerator : MonoBehaviour
 
     private void AddVentCorner(string name, float x, float y, float z, bool wB, bool wF, bool wL, bool wR)
     {
+        if (scoringOnly) return;
         GameObject obj = new GameObject(name);
         obj.transform.SetParent(transform);
         obj.transform.localPosition = new Vector3(x, y, z);
@@ -565,6 +584,7 @@ public class ShipLayoutGenerator : MonoBehaviour
 
     private void AddVentTee(string name, float x, float y, float z, bool wB, bool wF, bool wL, bool wR)
     {
+        if (scoringOnly) return;
         GameObject obj = new GameObject(name);
         obj.transform.SetParent(transform);
         obj.transform.localPosition = new Vector3(x, y, z);
@@ -589,6 +609,7 @@ public class ShipLayoutGenerator : MonoBehaviour
     // ─────────────────────────────────────────────────────────────
     private void AddVentElbow(string name, float x, float y, float z, bool wB, bool wF, bool wL, bool wR)
     {
+        if (scoringOnly) return;
         GameObject obj = new GameObject(name);
         obj.transform.SetParent(transform);
         obj.transform.localPosition = new Vector3(x, y, z);
@@ -608,11 +629,13 @@ public class ShipLayoutGenerator : MonoBehaviour
     // ─────────────────────────────────────────────────────────────
     private void AddVentCap(string name, float x, float vY, float z)
     {
+        if (scoringOnly) return;
         MakeBoxOnParent(transform, name, new Vector3(x, vY + ventH / 2f, z), ventW, ventH, wallThickness);
     }
 
     private void AddVentCross(string name, float x, float y, float z)
     {
+        if (scoringOnly) return;
         GameObject obj = new GameObject(name);
         obj.transform.SetParent(transform);
         obj.transform.localPosition = new Vector3(x, y, z);
@@ -625,6 +648,7 @@ public class ShipLayoutGenerator : MonoBehaviour
 
     private void CutWallForDoor(ShipModuleGenerator parentGen, string wallName, bool isLeftWall, float corWidth, float corHeight, float corDepth, float doorOffsetZ, float doorW, float doorH)
     {
+        if (scoringOnly) return;
         float hw = corWidth / 2f;
         float hd = corDepth / 2f;
         float wallX = isLeftWall ? -hw + wallThickness / 2f : hw - wallThickness / 2f;
@@ -641,6 +665,7 @@ public class ShipLayoutGenerator : MonoBehaviour
 
     private void MakeBoxOnParent(Transform parent, string objName, Vector3 pos, float w, float h, float d)
     {
+        if (scoringOnly) return;
         ProBuilderMesh pb = ShapeGenerator.GenerateCube(PivotLocation.Center, new Vector3(w, h, d));
         pb.gameObject.name = objName;
         pb.transform.SetParent(parent);
@@ -658,7 +683,7 @@ public class ShipLayoutGenerator : MonoBehaviour
 
     private void DeleteChildWall(ShipModuleGenerator gen, string wallName)
     {
-        if (gen == null) return;
+        if (gen == null || scoringOnly) return;
         Transform room = gen.transform;
         for (int i = room.childCount - 1; i >= 0; i--)
         {
@@ -673,6 +698,7 @@ public class ShipLayoutGenerator : MonoBehaviour
 
     private ShipModuleGenerator AddRoom(string n, float x, float z, float w, float h, float d)
     {
+        if (scoringOnly) return null;
         GameObject o = new GameObject(n); o.transform.SetParent(transform);
         o.transform.localPosition = new Vector3(x, 0, z);
         ShipModuleGenerator g = o.AddComponent<ShipModuleGenerator>();
@@ -684,6 +710,7 @@ public class ShipLayoutGenerator : MonoBehaviour
 
     private ShipModuleGenerator AddCorridor(string n, float x, float z, float w, float h, float d)
     {
+        if (scoringOnly) return null;
         GameObject o = new GameObject(n); o.transform.SetParent(transform);
         o.transform.localPosition = new Vector3(x, 0, z);
         ShipModuleGenerator g = o.AddComponent<ShipModuleGenerator>();
@@ -695,6 +722,7 @@ public class ShipLayoutGenerator : MonoBehaviour
 
     private void AddCorner(string n, float x, float z, float w, float h, float d, bool wB, bool wF, bool wL, bool wR)
     {
+        if (scoringOnly) return;
         GameObject o = new GameObject(n); o.transform.SetParent(transform);
         o.transform.localPosition = new Vector3(x, 0, z);
         ShipModuleGenerator g = o.AddComponent<ShipModuleGenerator>();
@@ -707,6 +735,7 @@ public class ShipLayoutGenerator : MonoBehaviour
 
     private ShipModuleGenerator AddDoorWall(string n, float x, float z, float w, float h)
     {
+        if (scoringOnly) return null;
         GameObject o = new GameObject(n); o.transform.SetParent(transform);
         o.transform.localPosition = new Vector3(x, 0, z);
         ShipModuleGenerator g = o.AddComponent<ShipModuleGenerator>();
@@ -719,6 +748,7 @@ public class ShipLayoutGenerator : MonoBehaviour
 
     private ShipModuleGenerator AddDoorWallSide(string n, float x, float z, float w, float h)
     {
+        if (scoringOnly) return null;
         GameObject o = new GameObject(n); o.transform.SetParent(transform);
         o.transform.localPosition = new Vector3(x, 0, z);
         o.transform.localRotation = Quaternion.Euler(0, 90, 0);
@@ -732,6 +762,7 @@ public class ShipLayoutGenerator : MonoBehaviour
 
     private void AddProp(string n, float x, float y, float z, ShipModuleGenerator.ModuleType t, float w, float h, float d)
     {
+        if (scoringOnly) return;
         GameObject o = new GameObject(n); o.transform.SetParent(transform);
         o.transform.localPosition = new Vector3(x, y, z);
         ShipModuleGenerator g = o.AddComponent<ShipModuleGenerator>();
@@ -748,6 +779,9 @@ public class ShipLayoutGenerator : MonoBehaviour
 
     private void CutCeilingForVent(ShipModuleGenerator roomGen, float holeW, float holeD)
     {
+        // In scoring mode no geometry was built; return silently so ventCutsMade++ in the
+        // caller still increments correctly to give the scorer accurate data.
+        if (scoringOnly) return;
         if (roomGen == null)
         {
             Debug.LogWarning("[ProcGen] CutCeilingForVent: null roomGen — skipping ceiling cut.");
@@ -793,6 +827,8 @@ public class ShipLayoutGenerator : MonoBehaviour
 
     private void CutVentInDoorWallTop(Transform doorWallParent, float wallH, float doorH, float vY)
     {
+        // In scoring mode no geometry was built; parent may be null if AddDoorWall returned null.
+        if (doorWallParent == null || scoringOnly) return;
         for (int i = doorWallParent.childCount - 1; i >= 0; i--)
         {
             if (doorWallParent.GetChild(i).name == "DoorWall_Top")
@@ -954,6 +990,7 @@ public class ShipLayoutGenerator : MonoBehaviour
     private void BuildEngFrontWallDynamic(float engW, float engH,
         float engFrontZ, float[] openingXs, float openingW, float doorH)
     {
+        if (scoringOnly) return;
         if (openingXs == null || openingXs.Length == 0) return;
         System.Array.Sort(openingXs);
 
@@ -1089,11 +1126,14 @@ public class ShipLayoutGenerator : MonoBehaviour
         for (int i = 0; i < _procRetries; i++)
             actualSeed = (int)(unchecked((long)actualSeed * 6364136223846793005L + 1442695040888963407L) & 0x7FFFFFFF);
         System.Random rng = new System.Random(actualSeed);
-        string bannerSep = new string('═', 52);
-        Debug.Log("[ProcGen:AI] " + bannerSep);
-        Debug.Log(string.Format("[ProcGen:AI] <b>INTELLIGENT LAYOUT GENERATION</b>  Seed={0}{1}",
-            actualSeed, _procRetries > 0 ? "  <color=#ff9900>(RETRY " + _procRetries + "/5)</color>" : ""));
-        Debug.Log("[ProcGen:AI] " + bannerSep);
+        if (!scoringOnly)
+        {
+            string bannerSep = new string('═', 52);
+            Debug.Log("[ProcGen:AI] " + bannerSep);
+            Debug.Log(string.Format("[ProcGen:AI] <b>INTELLIGENT LAYOUT GENERATION</b>  Seed={0}{1}",
+                actualSeed, _procRetries > 0 ? "  <color=#ff9900>(RETRY " + _procRetries + "/5)</color>" : ""));
+            Debug.Log("[ProcGen:AI] " + bannerSep);
+        }
 
         // AABB overlap safety margin.  0.05 is intentionally small: side rooms are
         // designed to abut (slightly overlap) their parent corridor wall for proper
@@ -1150,7 +1190,7 @@ public class ShipLayoutGenerator : MonoBehaviour
         //  and fork branch layout.  All Z positions are calculated
         //  here; no geometry is built yet.
         // ════════════════════════════════════════════════════════
-        Debug.Log("[ProcGen:AI] <b>── PHASE 1: Spine Topology Planning ──</b>");
+        if (!scoringOnly) Debug.Log("[ProcGen:AI] <b>── PHASE 1: Spine Topology Planning ──</b>");
 
         float dockW   = RngRange(rng, 14f, 18f);
         float dockD   = RngRange(rng, 10f, 14f);
@@ -1245,10 +1285,11 @@ public class ShipLayoutGenerator : MonoBehaviour
         { bX[0] = -(engW / 4f); bX[1] = engW / 4f; }
         else
         { bX[0] = -(engW / 3f); bX[1] = 0f; bX[2] = engW / 3f; }
-        Debug.Log(string.Format("[ProcGen:AI] Topology: spine={0} corridors | cargo after cor{1} | eng={2:F1}×{3:F1}×{4:F1}h | branches={5} at X=[{6}]",
-            spineCount, cargoAfterIdx,
-            engW, engD, engH, branchCount,
-            string.Join(", ", System.Array.ConvertAll(bX, x => x.ToString("F1")))));
+        if (!scoringOnly)
+            Debug.Log(string.Format("[ProcGen:AI] Topology: spine={0} corridors | cargo after cor{1} | eng={2:F1}×{3:F1}×{4:F1}h | branches={5} at X=[{6}]",
+                spineCount, cargoAfterIdx,
+                engW, engD, engH, branchCount,
+                string.Join(", ", System.Array.ConvertAll(bX, x => x.ToString("F1")))));
 
         // Incremental branch-corridor AABB registry used only during Phase 1 geometry
         // planning.  This list is SEPARATE from the main 'bds' list to avoid false
@@ -1299,10 +1340,11 @@ public class ShipLayoutGenerator : MonoBehaviour
             //   3. If no valid length exists, fall back to straight pattern
             //      (bPat = 0) so the layout is always playable.
             // ────────────────────────────────────────────────────────────────
-            Debug.Log(string.Format("[ProcGen:AI] Branch {0} @ X={1:F1}: initial pattern={2} | strLen={3:F1}m sideLen={4:F1}m{5} dir={6}",
-                b, bX[b], bPat[b] == 1 ? "Z-shape" : "straight",
-                bStrLen[b], bSideLen[b], bPat[b] == 1 ? string.Format(" finLen={0:F1}m", bFinLen[b]) : "",
-                bSideDir[b] == -1 ? "left" : "right"));
+            if (!scoringOnly)
+                Debug.Log(string.Format("[ProcGen:AI] Branch {0} @ X={1:F1}: initial pattern={2} | strLen={3:F1}m sideLen={4:F1}m{5} dir={6}",
+                    b, bX[b], bPat[b] == 1 ? "Z-shape" : "straight",
+                    bStrLen[b], bSideLen[b], bPat[b] == 1 ? string.Format(" finLen={0:F1}m", bFinLen[b]) : "",
+                    bSideDir[b] == -1 ? "left" : "right"));
 
             if (bPat[b] == 1)
             {
@@ -1328,7 +1370,7 @@ public class ShipLayoutGenerator : MonoBehaviour
                     float testStrLen = strCandidates[si];
                     float testStrFr  = engFr + testStrLen;
 
-                    if (si > 0)
+                    if (si > 0 && !scoringOnly)
                         Debug.Log(string.Format(
                             "[ProcGen:AI]   Branch {0}: Z-shape all directions failed at strLen={1:F1}m → trying shorter strLen={2:F1}m.",
                             b, strCandidates[si - 1], testStrLen));
@@ -1338,7 +1380,7 @@ public class ShipLayoutGenerator : MonoBehaviour
                         int  testDir = dirPass == 0 ? origDir : -origDir;
                         bool gl      = testDir == -1;
 
-                        if (dirPass == 1)
+                        if (dirPass == 1 && !scoringOnly)
                             Debug.Log(string.Format(
                                 "[ProcGen:AI]   Branch {0}: Z-shape dir={1} failed at strLen={2:F1}m — flipping to {3} and retrying.",
                                 b, origDir == -1 ? "left" : "right", testStrLen, testDir == -1 ? "left" : "right"));
@@ -1373,7 +1415,7 @@ public class ShipLayoutGenerator : MonoBehaviour
                             shrinkSteps++;
                         }
 
-                        if (!foundFit)
+                        if (!foundFit && !scoringOnly)
                             Debug.Log(string.Format(
                                 "[ProcGen:AI]   Branch {0}: Z-shape dir={1} strLen={2:F1}m — no sideLen fits after {3} shrink steps.",
                                 b, testDir == -1 ? "left" : "right", testStrLen, shrinkSteps));
@@ -1386,19 +1428,23 @@ public class ShipLayoutGenerator : MonoBehaviour
                     bSideLen[b] = winSideLen;
                     bSideDir[b] = winDir;
                     strFr       = engFr + bStrLen[b];
-                    bool adjusted = winSideLen < bSideLen[b] ||
-                                    System.Math.Abs(winStrLen - strCandidates[0]) > 0.01f;
-                    Debug.Log(string.Format(
-                        "[ProcGen:AI] Branch {0}: <color=#00ff88><b>✓ Z-shape accepted</b></color> strLen={1:F1}m sideLen={2:F1}m dir={3}{4}.",
-                        b, bStrLen[b], bSideLen[b], bSideDir[b] == -1 ? "left" : "right",
-                        adjusted ? " <color=#ffcc00>(config adjusted to fit)</color>" : ""));
+                    if (!scoringOnly)
+                    {
+                        bool adjusted = winSideLen < bSideLen[b] ||
+                                        System.Math.Abs(winStrLen - strCandidates[0]) > 0.01f;
+                        Debug.Log(string.Format(
+                            "[ProcGen:AI] Branch {0}: <color=#00ff88><b>✓ Z-shape accepted</b></color> strLen={1:F1}m sideLen={2:F1}m dir={3}{4}.",
+                            b, bStrLen[b], bSideLen[b], bSideDir[b] == -1 ? "left" : "right",
+                            adjusted ? " <color=#ffcc00>(config adjusted to fit)</color>" : ""));
+                    }
                 }
                 else
                 {
                     // ── Z-shape failed: try L-shape (straight + corner + side + corner, no Fin corridor) ──
-                    Debug.Log(string.Format(
-                        "[ProcGen:AI] Branch {0}: <color=#ffcc00>Z-shape exhausted</color> ({1} strLen × 2 dir × N sideLen attempts failed) — <b>trying L-shape</b>.",
-                        b, strCandidates.Length));
+                    if (!scoringOnly)
+                        Debug.Log(string.Format(
+                            "[ProcGen:AI] Branch {0}: <color=#ffcc00>Z-shape exhausted</color> ({1} strLen × 2 dir × N sideLen attempts failed) — <b>trying L-shape</b>.",
+                            b, strCandidates.Length));
 
                     bSideDir[b] = origDir; // reset direction before L-shape search
                     float lStrFr = engFr + bStrLen[b]; // L-shape uses original strLen
@@ -1408,7 +1454,7 @@ public class ShipLayoutGenerator : MonoBehaviour
                         int  testDir = dirPass == 0 ? origDir : -origDir;
                         bool gl      = testDir == -1;
 
-                        if (dirPass == 1)
+                        if (dirPass == 1 && !scoringOnly)
                             Debug.Log(string.Format(
                                 "[ProcGen:AI]   Branch {0}: L-shape dir={1} failed — flipping to {2}.",
                                 b, origDir == -1 ? "left" : "right", testDir == -1 ? "left" : "right"));
@@ -1444,23 +1490,26 @@ public class ShipLayoutGenerator : MonoBehaviour
                     {
                         bPat[b] = 2;
                         strFr   = engFr + bStrLen[b];
-                        Debug.Log(string.Format(
-                            "[ProcGen:AI] Branch {0}: <color=#00ff88><b>✓ L-shape accepted</b></color> strLen={1:F1}m sideLen={2:F1}m dir={3}.",
-                            b, bStrLen[b], bSideLen[b], bSideDir[b] == -1 ? "left" : "right"));
+                        if (!scoringOnly)
+                            Debug.Log(string.Format(
+                                "[ProcGen:AI] Branch {0}: <color=#00ff88><b>✓ L-shape accepted</b></color> strLen={1:F1}m sideLen={2:F1}m dir={3}.",
+                                b, bStrLen[b], bSideLen[b], bSideDir[b] == -1 ? "left" : "right"));
                     }
                     else
                     {
                         bSideDir[b] = origDir;
                         bPat[b]     = 0;
-                        Debug.Log(string.Format(
-                            "[ProcGen:AI] Branch {0}: <color=#ff4444><b>✗ Z and L-shape both exhausted</b></color> — falling back to <b>straight</b> pattern.",
-                            b));
+                        if (!scoringOnly)
+                            Debug.Log(string.Format(
+                                "[ProcGen:AI] Branch {0}: <color=#ff4444><b>✗ Z and L-shape both exhausted</b></color> — falling back to <b>straight</b> pattern.",
+                                b));
                     }
                 }
             }
             else
             {
-                Debug.Log(string.Format("[ProcGen:AI] Branch {0}: straight pattern chosen (random initial roll).", b));
+                if (!scoringOnly)
+                    Debug.Log(string.Format("[ProcGen:AI] Branch {0}: straight pattern chosen (random initial roll).", b));
             }
 
             // Commit geometry for this branch
@@ -1503,6 +1552,7 @@ public class ShipLayoutGenerator : MonoBehaviour
         }
 
         // Branch pattern summary log
+        if (!scoringOnly)
         {
             int zCount = 0, lCount = 0, sCount = 0;
             for (int b = 0; b < branchCount; b++) { if (bPat[b] == 1) zCount++; else if (bPat[b] == 2) lCount++; else sCount++; }
@@ -1545,7 +1595,7 @@ public class ShipLayoutGenerator : MonoBehaviour
         //  deciding to skip the room cleanly.  Skipped rooms leave
         //  NO orphaned corridor walls, door cuts, or vent branches.
         // ════════════════════════════════════════════════════════
-        Debug.Log("[ProcGen:AI] <b>── PHASE 2: Intelligent Room Placement ──</b>");
+        if (!scoringOnly) Debug.Log("[ProcGen:AI] <b>── PHASE 2: Intelligent Room Placement ──</b>");
 
         // Register required rooms first so optionals are tested against them
         bds.Add(new Vector4(0f, dockZ,   dockW  / 2f, dockD  / 2f));
@@ -1619,14 +1669,18 @@ public class ShipLayoutGenerator : MonoBehaviour
                     else
                     { sHR[i] = true; sRNm[i] = pName[k]; sRW[i] = fw; sRD[i] = fd; sRX[i] = fcx; }
                     roomsPlaced++;
-                    Debug.Log(string.Format("[ProcGen:AI] Spine[{0}] placed '{1}' on {2} side (w={3:F1} d={4:F1}).",
-                        i, pName[k], fLeft ? "left" : "right", fw, fd));
+                    if (!scoringOnly)
+                        Debug.Log(string.Format("[ProcGen:AI] Spine[{0}] placed '{1}' on {2} side (w={3:F1} d={4:F1}).",
+                            i, pName[k], fLeft ? "left" : "right", fw, fd));
                 }
                 else
                 {
-                    Debug.LogWarning("[ProcGen] All placement attempts failed for " +
-                        pName[k] + " at spine[" + i + "]. Skipping cleanly.");
-                    Debug.Log(string.Format("[ProcGen:AI] Spine[{0}] '{1}' skipped — no valid position found after 6 attempts.", i, pName[k]));
+                    if (!scoringOnly)
+                    {
+                        Debug.LogWarning("[ProcGen] All placement attempts failed for " +
+                            pName[k] + " at spine[" + i + "]. Skipping cleanly.");
+                        Debug.Log(string.Format("[ProcGen:AI] Spine[{0}] '{1}' skipped — no valid position found after 6 attempts.", i, pName[k]));
+                    }
                     roomsSkipped++; pp++;
                 }
             }
@@ -1656,15 +1710,19 @@ public class ShipLayoutGenerator : MonoBehaviour
                         else
                         { sHR[i] = true; sRNm[i] = pName[k]; sRW[i] = rW2; sRD[i] = rD2; sRX[i] = cx2; }
                         roomsPlaced++; placed2 = true;
-                        Debug.Log(string.Format("[ProcGen:AI] Spine[{0}] placed '{1}' on {2} side attempt {3} (w={4:F1} d={5:F1}).",
-                            i, pName[k], needLeft ? "left" : "right", mi2, rW2, rD2));
+                        if (!scoringOnly)
+                            Debug.Log(string.Format("[ProcGen:AI] Spine[{0}] placed '{1}' on {2} side attempt {3} (w={4:F1} d={5:F1}).",
+                                i, pName[k], needLeft ? "left" : "right", mi2, rW2, rD2));
                     }
                 }
                 if (!placed2)
                 {
-                    Debug.LogWarning("[ProcGen] All placement attempts failed for " +
-                        pName[k] + " at spine[" + i + "] (second side). Skipping cleanly.");
-                    Debug.Log(string.Format("[ProcGen:AI] Spine[{0}] '{1}' (second side) skipped — no valid position.", i, pName[k]));
+                    if (!scoringOnly)
+                    {
+                        Debug.LogWarning("[ProcGen] All placement attempts failed for " +
+                            pName[k] + " at spine[" + i + "] (second side). Skipping cleanly.");
+                        Debug.Log(string.Format("[ProcGen:AI] Spine[{0}] '{1}' (second side) skipped — no valid position.", i, pName[k]));
+                    }
                     roomsSkipped++; pp++;
                 }
             }
@@ -1685,12 +1743,16 @@ public class ShipLayoutGenerator : MonoBehaviour
                 engHR = true; reactNm = pName[k];
                 reactW_ = pRW[k]; reactD_ = pRD[k]; reactX = cx;
                 roomsPlaced++;
-                Debug.Log(string.Format("[ProcGen:AI] Eng-Right placed '{0}' (w={1:F1} d={2:F1}).", pName[k], pRW[k], pRD[k]));
+                if (!scoringOnly)
+                    Debug.Log(string.Format("[ProcGen:AI] Eng-Right placed '{0}' (w={1:F1} d={2:F1}).", pName[k], pRW[k], pRD[k]));
             }
             else
             {
-                Debug.LogWarning("[ProcGen] " + pName[k] + "_EngR overlaps — skipping.");
-                Debug.Log(string.Format("[ProcGen:AI] Eng-Right '{0}' skipped — overlaps engineering hub.", pName[k]));
+                if (!scoringOnly)
+                {
+                    Debug.LogWarning("[ProcGen] " + pName[k] + "_EngR overlaps — skipping.");
+                    Debug.Log(string.Format("[ProcGen:AI] Eng-Right '{0}' skipped — overlaps engineering hub.", pName[k]));
+                }
                 roomsSkipped++;
             }
         }
@@ -1704,12 +1766,16 @@ public class ShipLayoutGenerator : MonoBehaviour
                 engHL = true; labNm = pName[k];
                 labW_ = pRW[k]; labD_ = pRD[k]; labX = cx;
                 roomsPlaced++;
-                Debug.Log(string.Format("[ProcGen:AI] Eng-Left placed '{0}' (w={1:F1} d={2:F1}).", pName[k], pRW[k], pRD[k]));
+                if (!scoringOnly)
+                    Debug.Log(string.Format("[ProcGen:AI] Eng-Left placed '{0}' (w={1:F1} d={2:F1}).", pName[k], pRW[k], pRD[k]));
             }
             else
             {
-                Debug.LogWarning("[ProcGen] " + pName[k] + "_EngL overlaps — skipping.");
-                Debug.Log(string.Format("[ProcGen:AI] Eng-Left '{0}' skipped — overlaps engineering hub.", pName[k]));
+                if (!scoringOnly)
+                {
+                    Debug.LogWarning("[ProcGen] " + pName[k] + "_EngL overlaps — skipping.");
+                    Debug.Log(string.Format("[ProcGen:AI] Eng-Left '{0}' skipped — overlaps engineering hub.", pName[k]));
+                }
                 roomsSkipped++;
             }
         }
@@ -1741,14 +1807,15 @@ public class ShipLayoutGenerator : MonoBehaviour
             int termParentCorBdsIdx = (bPat[b] == 0) ? bStrCorBdsIdx[b] : bFinCorBdsIdx[b];
             float[] termMults  = { 1.0f, 0.85f, 0.70f };
             bool    termFit    = false;
-            Debug.Log(string.Format("[ProcGen:AI]   Branch {0} terminal '{1}' at X={2:F1}: checking {3:F1}×{4:F1}...",
-                b, bTermNm[b], bTermX[b], bTermW[b], bTermD[b]));
+            if (!scoringOnly)
+                Debug.Log(string.Format("[ProcGen:AI]   Branch {0} terminal '{1}' at X={2:F1}: checking {3:F1}×{4:F1}...",
+                    b, bTermNm[b], bTermX[b], bTermW[b], bTermD[b]));
             for (int mi = 0; mi < termMults.Length && !termFit; mi++)
             {
                 float tW  = Mathf.Max(4f, bTermW[b] * termMults[mi]);
                 float tD  = Mathf.Max(3f, bTermD[b] * termMults[mi]);
                 float tCZ = bTermBk[b] + tD / 2f;
-                if (mi > 0)
+                if (mi > 0 && !scoringOnly)
                     Debug.Log(string.Format("[ProcGen:AI]   Branch {0} terminal '{1}': full size blocked — shrinking to {2:F0}% ({3:F1}×{4:F1}).",
                         b, bTermNm[b], termMults[mi] * 100f, tW, tD));
                 if (ProcTryRegister(bds, bTermX[b], tCZ, tW / 2f, tD / 2f, kPad, termParentCorBdsIdx))
@@ -1757,16 +1824,20 @@ public class ShipLayoutGenerator : MonoBehaviour
                     bTermW[b] = tW;  bTermD[b] = tD;  bTermCZ[b] = tCZ;
                     roomsPlaced++;
                     termFit = true;
-                    string patName  = bPat[b] == 0 ? "straight" : bPat[b] == 1 ? "Z" : "L";
-                    string sizeNote = mi == 0 ? "" : string.Format(" <color=#ffcc00>(at {0:F0}% size)</color>", termMults[mi] * 100f);
-                    Debug.Log(string.Format("[ProcGen:AI]   Branch {0} terminal '{1}' <color=#00ff88>✓ placed</color> (w={2:F1} d={3:F1} pat={4}){5}.",
-                        b, bTermNm[b], tW, tD, patName, sizeNote));
+                    if (!scoringOnly)
+                    {
+                        string patName  = bPat[b] == 0 ? "straight" : bPat[b] == 1 ? "Z" : "L";
+                        string sizeNote = mi == 0 ? "" : string.Format(" <color=#ffcc00>(at {0:F0}% size)</color>", termMults[mi] * 100f);
+                        Debug.Log(string.Format("[ProcGen:AI]   Branch {0} terminal '{1}' <color=#00ff88>✓ placed</color> (w={2:F1} d={3:F1} pat={4}){5}.",
+                            b, bTermNm[b], tW, tD, patName, sizeNote));
+                    }
                 }
             }
             if (!termFit)
             {
-                Debug.LogWarning(string.Format("[ProcGen:AI]   Branch {0} terminal '{1}' <color=#ff4444>✗ no size fits</color> — corridor will be capped.",
-                    b, bTermNm[b]));
+                if (!scoringOnly)
+                    Debug.LogWarning(string.Format("[ProcGen:AI]   Branch {0} terminal '{1}' <color=#ff4444>✗ no size fits</color> — corridor will be capped.",
+                        b, bTermNm[b]));
                 roomsSkipped++;
             }
         }
@@ -1788,12 +1859,16 @@ public class ShipLayoutGenerator : MonoBehaviour
                 if (ProcTryRegister(bds, cx, bFinCZ[b], pRW[k] / 2f, pRD[k] / 2f, kPad, bFinCorBdsIdx[b]))
                 {
                     bHL[b] = true; bLNm[b] = pName[k]; bLW[b] = pRW[k]; bLD[b] = pRD[k]; bLX[b] = cx; roomsPlaced++;
-                    Debug.Log(string.Format("[ProcGen:AI] Branch {0} fin-left '{1}' placed.", b, pName[k]));
+                    if (!scoringOnly)
+                        Debug.Log(string.Format("[ProcGen:AI] Branch {0} fin-left '{1}' placed.", b, pName[k]));
                 }
                 else
                 {
-                    Debug.LogWarning("[ProcGen] " + pName[k] + "_BL" + b + " overlaps — skipping.");
-                    Debug.Log(string.Format("[ProcGen:AI] Branch {0} fin-left '{1}' skipped — overlaps existing geometry.", b, pName[k]));
+                    if (!scoringOnly)
+                    {
+                        Debug.LogWarning("[ProcGen] " + pName[k] + "_BL" + b + " overlaps — skipping.");
+                        Debug.Log(string.Format("[ProcGen:AI] Branch {0} fin-left '{1}' skipped — overlaps existing geometry.", b, pName[k]));
+                    }
                     roomsSkipped++;
                 }
             }
@@ -1804,12 +1879,16 @@ public class ShipLayoutGenerator : MonoBehaviour
                 if (ProcTryRegister(bds, cx, bFinCZ[b], pRW[k] / 2f, pRD[k] / 2f, kPad, bFinCorBdsIdx[b]))
                 {
                     bHR[b] = true; bRNm[b] = pName[k]; bRW[b] = pRW[k]; bRD[b] = pRD[k]; bRX[b] = cx; roomsPlaced++;
-                    Debug.Log(string.Format("[ProcGen:AI] Branch {0} fin-right '{1}' placed.", b, pName[k]));
+                    if (!scoringOnly)
+                        Debug.Log(string.Format("[ProcGen:AI] Branch {0} fin-right '{1}' placed.", b, pName[k]));
                 }
                 else
                 {
-                    Debug.LogWarning("[ProcGen] " + pName[k] + "_BR" + b + " overlaps — skipping.");
-                    Debug.Log(string.Format("[ProcGen:AI] Branch {0} fin-right '{1}' skipped — overlaps existing geometry.", b, pName[k]));
+                    if (!scoringOnly)
+                    {
+                        Debug.LogWarning("[ProcGen] " + pName[k] + "_BR" + b + " overlaps — skipping.");
+                        Debug.Log(string.Format("[ProcGen:AI] Branch {0} fin-right '{1}' skipped — overlaps existing geometry.", b, pName[k]));
+                    }
                     roomsSkipped++;
                 }
             }
@@ -1821,8 +1900,9 @@ public class ShipLayoutGenerator : MonoBehaviour
         //  is gated behind the corresponding existence flag set in
         //  Phase 2.  Skipped rooms produce zero orphaned geometry.
         // ════════════════════════════════════════════════════════
-        Debug.Log("[ProcGen:AI] <b>── PHASE 3: Building Geometry ──</b>");
+        if (!scoringOnly)
         {
+            Debug.Log("[ProcGen:AI] <b>── PHASE 3: Building Geometry ──</b>");
             int zCntP3 = 0, lCntP3 = 0, sCntP3 = 0;
             for (int b = 0; b < branchCount; b++) { if (bPat[b] == 1) zCntP3++; else if (bPat[b] == 2) lCntP3++; else sCntP3++; }
             Debug.Log(string.Format("[ProcGen:AI]   Branches: {0}×Z-shape | {1}×L-shape | {2}×straight  |  Eng-R={3} Eng-L={4}",
@@ -1832,9 +1912,10 @@ public class ShipLayoutGenerator : MonoBehaviour
         // --- Docking Bay ---
         var dockGen = AddRoom("DockingBay", 0f, dockZ, dockW, dockH, dockD);
         DeleteChildWall(dockGen, "Wall_Front");
-        CutVentInDoorWallTop(
-            AddDoorWall("Door_Dock_Front", 0f, dockFr - wallThickness / 2f, dockW, dockH).transform,
-            dockH, dH, vY);
+        if (!scoringOnly)
+            CutVentInDoorWallTop(
+                AddDoorWall("Door_Dock_Front", 0f, dockFr - wallThickness / 2f, dockW, dockH).transform,
+                dockH, dH, vY);
 
         // --- Spine corridors + optional side rooms ---
         var sCorGen = new ShipModuleGenerator[spineCount];
@@ -1865,20 +1946,23 @@ public class ShipLayoutGenerator : MonoBehaviour
         // --- Cargo Bay ---
         var cargoGen = AddRoom("CargoBay", 0f, cargoCZ, cargoW, cargoH, cargoD);
         DeleteChildWall(cargoGen, "Wall_Back");
-        CutVentInDoorWallTop(
-            AddDoorWall("Door_Cargo_Back", 0f, cargoBk + wallThickness / 2f, cargoW, cargoH).transform,
-            cargoH, dH, vY);
+        if (!scoringOnly)
+            CutVentInDoorWallTop(
+                AddDoorWall("Door_Cargo_Back", 0f, cargoBk + wallThickness / 2f, cargoW, cargoH).transform,
+                cargoH, dH, vY);
         DeleteChildWall(cargoGen, "Wall_Front");
-        CutVentInDoorWallTop(
-            AddDoorWall("Door_Cargo_Front", 0f, cargoFrZ - wallThickness / 2f, cargoW, cargoH).transform,
-            cargoH, dH, vY);
+        if (!scoringOnly)
+            CutVentInDoorWallTop(
+                AddDoorWall("Door_Cargo_Front", 0f, cargoFrZ - wallThickness / 2f, cargoW, cargoH).transform,
+                cargoH, dH, vY);
 
         // --- Engineering Hub ---
         var engGen = AddRoom("EngineeringHub", 0f, engCZ, engW, engH, engD);
         DeleteChildWall(engGen, "Wall_Back");
-        CutVentInDoorWallTop(
-            AddDoorWall("Door_Eng_Back", 0f, engBk + wallThickness / 2f, engW, engH).transform,
-            engH, dH, vY);
+        if (!scoringOnly)
+            CutVentInDoorWallTop(
+                AddDoorWall("Door_Eng_Back", 0f, engBk + wallThickness / 2f, engW, engH).transform,
+                engH, dH, vY);
         DeleteChildWall(engGen, "Wall_Front");
         // Dynamic front wall — adapts to any number of branch openings
         BuildEngFrontWallDynamic(engW, engH, engFr, (float[])bX.Clone(), corridorWidth, dH);
@@ -1889,32 +1973,34 @@ public class ShipLayoutGenerator : MonoBehaviour
         if (engHR)
         {
             DeleteChildWall(engGen, "Wall_Right");
-            CutVentInDoorWallTop(
-                AddDoorWallSide("Door_Eng_R", engW / 2f - wallThickness / 2f, engCZ, engD, engH).transform,
-                engH, dH, vY);
+            if (!scoringOnly)
+                CutVentInDoorWallTop(
+                    AddDoorWallSide("Door_Eng_R", engW / 2f - wallThickness / 2f, engCZ, engD, engH).transform,
+                    engH, dH, vY);
             engReactGen = AddRoom(reactNm + "_EngR", reactX, engCZ, reactW_, roomHeight, reactD_);
             DeleteChildWall(engReactGen, "Wall_Left");
         }
         else
         {
             // No reactor room — keep the original solid Wall_Right intact.
-            // No vent branch passes through this wall so no vent-band gap is needed.
-            // (The previous split-panel approach left a gap from vY to engVTop with no geometry.)
-            Debug.Log("[ProcGen:AI]   Eng right wall: <b>no reactor — solid Wall_Right retained</b> (no vent gap needed).");
+            if (!scoringOnly)
+                Debug.Log("[ProcGen:AI]   Eng right wall: <b>no reactor — solid Wall_Right retained</b> (no vent gap needed).");
         }
         if (engHL)
         {
             DeleteChildWall(engGen, "Wall_Left");
-            CutVentInDoorWallTop(
-                AddDoorWallSide("Door_Eng_L", -(engW / 2f) + wallThickness / 2f, engCZ, engD, engH).transform,
-                engH, dH, vY);
+            if (!scoringOnly)
+                CutVentInDoorWallTop(
+                    AddDoorWallSide("Door_Eng_L", -(engW / 2f) + wallThickness / 2f, engCZ, engD, engH).transform,
+                    engH, dH, vY);
             engLabGen = AddRoom(labNm + "_EngL", labX, engCZ, labW_, roomHeight, labD_);
             DeleteChildWall(engLabGen, "Wall_Right");
         }
         else
         {
             // No lab room — keep the original solid Wall_Left intact.
-            Debug.Log("[ProcGen:AI]   Eng left wall: <b>no lab — solid Wall_Left retained</b> (no vent gap needed).");
+            if (!scoringOnly)
+                Debug.Log("[ProcGen:AI]   Eng left wall: <b>no lab — solid Wall_Left retained</b> (no vent gap needed).");
         }
 
         // --- Fork branches ---
@@ -1966,6 +2052,7 @@ public class ShipLayoutGenerator : MonoBehaviour
                 float sideCX = goLeft
                     ? bX[b] - HalfCor - bSideLen[b] / 2f
                     : bX[b] + HalfCor + bSideLen[b] / 2f;
+                if (!scoringOnly)
                 {
                     GameObject so = new GameObject(bs + "Side");
                     so.transform.SetParent(transform);
@@ -2026,8 +2113,9 @@ public class ShipLayoutGenerator : MonoBehaviour
             }
             else // bPat[b] == 2: L-shaped branch (straight → C1 → side → C2 → terminal, no Fin corridor)
             {
-                Debug.Log(string.Format("[ProcGen:AI]   Building branch {0}: <b>L-shape</b> strLen={1:F1}m sideLen={2:F1}m dir={3}.",
-                    b, bStrLen[b], bSideLen[b], goLeft ? "left" : "right"));
+                if (!scoringOnly)
+                    Debug.Log(string.Format("[ProcGen:AI]   Building branch {0}: <b>L-shape</b> strLen={1:F1}m sideLen={2:F1}m dir={3}.",
+                        b, bStrLen[b], bSideLen[b], goLeft ? "left" : "right"));
 
                 float strZ_L = engFr + bStrLen[b] / 2f;
                 AddCorridor(bs + "Str", bX[b], strZ_L, corridorWidth, corridorHeight, bStrLen[b]);
@@ -2043,6 +2131,7 @@ public class ShipLayoutGenerator : MonoBehaviour
                 float sideCX_L = goLeft
                     ? bX[b] - HalfCor - bSideLen[b] / 2f
                     : bX[b] + HalfCor + bSideLen[b] / 2f;
+                if (!scoringOnly)
                 {
                     GameObject so_L = new GameObject(bs + "Side");
                     so_L.transform.SetParent(transform);
@@ -2087,7 +2176,7 @@ public class ShipLayoutGenerator : MonoBehaviour
         //  drops are only generated for rooms that exist.
         //  Every dead end receives a VentCap — no open shafts.
         // ════════════════════════════════════════════════════════
-        Debug.Log("[ProcGen:AI] <b>── PHASE 4: Vent Network ──</b>");
+        if (!scoringOnly) Debug.Log("[ProcGen:AI] <b>── PHASE 4: Vent Network ──</b>");
 
         // --- Dock: dead-end cap + entry elbow ---
         float dockCapZ = dockZ - dockD / 2f + 1f;
@@ -2334,7 +2423,7 @@ public class ShipLayoutGenerator : MonoBehaviour
         //  PHASE 5 — PROP SCATTERING
         //  Props are only placed in rooms that were built.
         // ════════════════════════════════════════════════════════
-        Debug.Log("[ProcGen:AI] <b>── PHASE 5: Prop Scattering ──</b>");
+        if (!scoringOnly) Debug.Log("[ProcGen:AI] <b>── PHASE 5: Prop Scattering ──</b>");
 
         // Dock
         AddProp("DockCrate_1",
@@ -2483,7 +2572,7 @@ public class ShipLayoutGenerator : MonoBehaviour
         //  room, or due to floating-point edge cases), add a
         //  fallback seal so the room is properly enclosed.
         // ════════════════════════════════════════════════════════
-        Debug.Log("[ProcGen:AI] <b>── PHASE 6: Final Validation ──</b>");
+        if (!scoringOnly) Debug.Log("[ProcGen:AI] <b>── PHASE 6: Final Validation ──</b>");
         int ceilFixes = 0;
         for (int i = 0; i < transform.childCount; i++)
         {
@@ -2577,9 +2666,10 @@ public class ShipLayoutGenerator : MonoBehaviour
                 if (vol > 0.5f)
                 {
                     overlapCount++;
-                    Debug.LogWarning(string.Format(
-                        "[ProcGen:Diag] OVERLAP: '{0}' and '{1}' intersect (volume={2:F2}m³)",
-                        modBounds[i].name, modBounds[j].name, vol));
+                    if (!scoringOnly)
+                        Debug.LogWarning(string.Format(
+                            "[ProcGen:Diag] OVERLAP: '{0}' and '{1}' intersect (volume={2:F2}m³)",
+                            modBounds[i].name, modBounds[j].name, vol));
                 }
             }
         }
@@ -2640,9 +2730,10 @@ public class ShipLayoutGenerator : MonoBehaviour
                     if (!hasDoorReplacement)
                     {
                         gapCount++;
-                        Debug.LogWarning(string.Format(
-                            "[ProcGen:Diag] GAP: Room '{0}' is missing '{1}' with no door replacement.",
-                            child.name, face));
+                        if (!scoringOnly)
+                            Debug.LogWarning(string.Format(
+                                "[ProcGen:Diag] GAP: Room '{0}' is missing '{1}' with no door replacement.",
+                                child.name, face));
                     }
                 }
             }
@@ -2686,13 +2777,16 @@ public class ShipLayoutGenerator : MonoBehaviour
 
         if (overlapCount > 0 || gapCount > 0 || corridorOverlaps > 0)
         {
-            Debug.LogError(string.Format(
-                "[ProcGen:Diag] <color=#ff4444><b>✗ LAYOUT ISSUES DETECTED</b></color> — {0} overlaps | {1} gaps | {2} corridor intersections.",
-                overlapCount, gapCount, corridorOverlaps));
-            if (corridorOverlaps > 0)
-                Debug.LogError("[ProcGen:Diag]   <b>⚠ CORRIDOR INTERSECTIONS FOUND</b> — this will trigger auto-retry.");
+            if (!scoringOnly)
+            {
+                Debug.LogError(string.Format(
+                    "[ProcGen:Diag] <color=#ff4444><b>✗ LAYOUT ISSUES DETECTED</b></color> — {0} overlaps | {1} gaps | {2} corridor intersections.",
+                    overlapCount, gapCount, corridorOverlaps));
+                if (corridorOverlaps > 0)
+                    Debug.LogError("[ProcGen:Diag]   <b>⚠ CORRIDOR INTERSECTIONS FOUND</b> — this will trigger auto-retry.");
+            }
         }
-        else
+        else if (!scoringOnly)
             Debug.Log("[ProcGen:Diag] <color=#00ff88><b>✓ Validation passed</b></color> — no overlaps or gaps detected.");
 
         // ════════════════════════════════════════════════════════════════
@@ -2708,19 +2802,23 @@ public class ShipLayoutGenerator : MonoBehaviour
         const int maxRetries = 5;
         if (tooBroken && _procRetries < maxRetries)
         {
-            Debug.LogWarning(string.Format(
-                "[ProcGen] Layout quality too low ({0} rooms placed, {1} skipped). Auto-retrying with mutated seed...",
-                roomsPlaced, roomsSkipped));
-            for (int i = transform.childCount - 1; i >= 0; i--)
+            if (!scoringOnly)
             {
-                if (Application.isPlaying) Destroy(transform.GetChild(i).gameObject);
-                else DestroyImmediate(transform.GetChild(i).gameObject);
+                Debug.LogWarning(string.Format(
+                    "[ProcGen] Layout quality too low ({0} rooms placed, {1} skipped). Auto-retrying with mutated seed...",
+                    roomsPlaced, roomsSkipped));
+                // Only destroy children when geometry was actually built.
+                for (int i = transform.childCount - 1; i >= 0; i--)
+                {
+                    if (Application.isPlaying) Destroy(transform.GetChild(i).gameObject);
+                    else DestroyImmediate(transform.GetChild(i).gameObject);
+                }
             }
             _procRetries++;
             GenerateProceduralLayout();
             return;
         }
-        if (tooBroken)
+        if (tooBroken && !scoringOnly)
             Debug.LogWarning("[ProcGen] Exhausted " + maxRetries + " retries. Using last generated layout.");
         _procRetries = 0;
 
@@ -2761,32 +2859,35 @@ public class ShipLayoutGenerator : MonoBehaviour
         LastRoomsLeftCount  = leftRooms;
         LastRoomsRightCount = rightRooms;
 
-        string summarySep = new string('─', 52);
-        Debug.Log("[ProcGen:AI] " + summarySep);
-        Debug.Log(string.Format(
-            "[ProcGen:AI] <b>GENERATION COMPLETE</b>  Seed={0}{1}",
-            actualSeed, _procRetries > 0 ? "  (retry " + _procRetries + ")" : ""));
-        Debug.Log(string.Format(
-            "[ProcGen:AI]   Budget : <b>{0} target rooms</b>  (base={1} + lvl{2}×{3:F2})",
-            targetRoomCount, tp_baseRoomBudget, lvl, tp_roomBudgetPerLvl));
-        Debug.Log(string.Format(
-            "[ProcGen:AI]   Spine  : {0} corridors | CargoBay after cor{1}",
-            spineCount, cargoAfterIdx - 1));
-        Debug.Log(string.Format(
-            "[ProcGen:AI]   Rooms  : <color=#00ff88>{0} placed</color> / <color=#ff4444>{1} skipped</color>  (budget ratio {2:P0})",
-            roomsPlaced, roomsSkipped, targetRoomCount > 0 ? (float)roomsPlaced / targetRoomCount : 0f));
-        Debug.Log(string.Format(
-            "[ProcGen:AI]   Branches ({0}): <color=#00ff88>{1}×Z-shape</color> | <color=#ffcc00>{2}×L-shape</color> | <color=#ff9988>{3}×straight</color> | {4} terminal(s) capped",
-            branchCount, finalZCount, finalLCount, finalSCount, terminalsCapped));
-        Debug.Log(string.Format(
-            "[ProcGen:AI]   Vents  : {0} segments | {1} ceiling cuts | {2} fallback seals",
-            ventSegs, ventCutsMade, ceilFixes));
-        if (overlapCount == 0 && gapCount == 0 && corridorOverlaps == 0)
-            Debug.Log("[ProcGen:AI]   Diagnostics: <color=#00ff88><b>✓ CLEAN — no overlaps, gaps, or corridor intersections</b></color>");
-        else
+        if (!scoringOnly)
+        {
+            string summarySep = new string('─', 52);
+            Debug.Log("[ProcGen:AI] " + summarySep);
             Debug.Log(string.Format(
-                "[ProcGen:AI]   Diagnostics: <color=#ff4444>{0} overlap(s)</color> | <color=#ff4444>{1} gap(s)</color> | <color=#ff4444>{2} corridor intersection(s)</color>",
-                overlapCount, gapCount, corridorOverlaps));
-        Debug.Log("[ProcGen:AI] " + summarySep);
+                "[ProcGen:AI] <b>GENERATION COMPLETE</b>  Seed={0}{1}",
+                actualSeed, _procRetries > 0 ? "  (retry " + _procRetries + ")" : ""));
+            Debug.Log(string.Format(
+                "[ProcGen:AI]   Budget : <b>{0} target rooms</b>  (base={1} + lvl{2}×{3:F2})",
+                targetRoomCount, tp_baseRoomBudget, lvl, tp_roomBudgetPerLvl));
+            Debug.Log(string.Format(
+                "[ProcGen:AI]   Spine  : {0} corridors | CargoBay after cor{1}",
+                spineCount, cargoAfterIdx - 1));
+            Debug.Log(string.Format(
+                "[ProcGen:AI]   Rooms  : <color=#00ff88>{0} placed</color> / <color=#ff4444>{1} skipped</color>  (budget ratio {2:P0})",
+                roomsPlaced, roomsSkipped, targetRoomCount > 0 ? (float)roomsPlaced / targetRoomCount : 0f));
+            Debug.Log(string.Format(
+                "[ProcGen:AI]   Branches ({0}): <color=#00ff88>{1}×Z-shape</color> | <color=#ffcc00>{2}×L-shape</color> | <color=#ff9988>{3}×straight</color> | {4} terminal(s) capped",
+                branchCount, finalZCount, finalLCount, finalSCount, terminalsCapped));
+            Debug.Log(string.Format(
+                "[ProcGen:AI]   Vents  : {0} segments | {1} ceiling cuts | {2} fallback seals",
+                ventSegs, ventCutsMade, ceilFixes));
+            if (overlapCount == 0 && gapCount == 0 && corridorOverlaps == 0)
+                Debug.Log("[ProcGen:AI]   Diagnostics: <color=#00ff88><b>✓ CLEAN — no overlaps, gaps, or corridor intersections</b></color>");
+            else
+                Debug.Log(string.Format(
+                    "[ProcGen:AI]   Diagnostics: <color=#ff4444>{0} overlap(s)</color> | <color=#ff4444>{1} gap(s)</color> | <color=#ff4444>{2} corridor intersection(s)</color>",
+                    overlapCount, gapCount, corridorOverlaps));
+            Debug.Log("[ProcGen:AI] " + summarySep);
+        }
     }
 }
