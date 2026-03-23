@@ -20,6 +20,13 @@ public class ShipLayoutGenerator : MonoBehaviour
     public bool proceduralLayout = false;
     public int seed = -1; // -1 = random
 
+    [Header("Level Testing")]
+    [Tooltip("Preview level used by 'Generate at Level N' context menus. " +
+             "0 = no scaling (full random). 1-200 mirrors the training generation tiers. " +
+             "Has no effect on normal Generate Ship Layout or in-game generation.")]
+    [Range(0, 200)]
+    public int previewLevel = 0;
+
     [Header("Trained Parameters")]
     public ShipLayoutTrainedParams trainedParams;
 
@@ -59,6 +66,50 @@ public class ShipLayoutGenerator : MonoBehaviour
     // generation.  _procBaseSeed is set once on the first attempt and reused for all retries.
     private int _procRetries = 0;
     private int _procBaseSeed = 0;
+
+    // ── Level-preview context menus ────────────────────────────────────────
+    // These let designers test what procedural maps look like at each training
+    // complexity tier without having to run the full evolutionary trainer.
+
+    [ContextMenu("Generate Procedural Layout at Preview Level")]
+    public void GenerateAtPreviewLevel() => GenerateAtLevel(previewLevel);
+
+    [ContextMenu("Generate Procedural Layout — Level 0 (No Scaling / Full Random)")]
+    public void GenerateAtLevel0()   => GenerateAtLevel(0);
+
+    [ContextMenu("Generate Procedural Layout — Level 30 (Early / Simple)")]
+    public void GenerateAtLevel30()  => GenerateAtLevel(30);
+
+    [ContextMenu("Generate Procedural Layout — Level 80 (Mid / Medium)")]
+    public void GenerateAtLevel80()  => GenerateAtLevel(80);
+
+    [ContextMenu("Generate Procedural Layout — Level 150 (Late / Large)")]
+    public void GenerateAtLevel150() => GenerateAtLevel(150);
+
+    [ContextMenu("Generate Procedural Layout — Level 200 (Full Complexity)")]
+    public void GenerateAtLevel200() => GenerateAtLevel(200);
+
+    /// <summary>
+    /// Generates a procedural layout at the given training-level complexity tier.
+    /// Use this in the Editor to preview what the DRL AI generator produces at
+    /// different training stages without running the full trainer.
+    /// </summary>
+    public void GenerateAtLevel(int level)
+    {
+        bool wasProc = proceduralLayout;
+        proceduralLayout    = true;
+        currentTrainingLevel = level;
+        GenerateShipLayout();
+        proceduralLayout    = wasProc;
+        currentTrainingLevel = 0;
+#if UNITY_EDITOR
+        UnityEditor.EditorUtility.SetDirty(this);
+        Debug.Log(string.Format(
+            "[ProcGen:Preview] Generated procedural layout at level {0}  " +
+            "(rooms={1}  branches={2}  seed={3})",
+            level, LastRoomsPlaced, LastBranchCount, LastActualSeed));
+#endif
+    }
 
     [ContextMenu("Generate Ship Layout")]
     public void GenerateShipLayout()
@@ -1084,14 +1135,14 @@ public class ShipLayoutGenerator : MonoBehaviour
 
         // Level-scaled complexity: generation/level determines map size.
         // Level 0 (no scaling) uses full random ranges.
-        // Tiers:  lvl 1–50  = small   (fewer corridors, 1 branch, small pool)
-        //         lvl 51–100 = medium  (more corridors, up to 2 branches)
-        //         lvl 101–150 = large  (full corridors, up to 3 branches)
-        //         lvl 151+   = full range (same as unscaled)
+        // Tiers:  lvl 1–30  = early   (2 spines, 1 branch, 2 room types, short corridors)
+        //         lvl 31–80 = medium  (2–3 spines, 1 branch, 4 room types)
+        //         lvl 81–150 = large  (2–4 spines, 1–2 branches, 7 room types)
+        //         lvl 151+  = full range (same as unscaled)
         int lvl = currentTrainingLevel;
-        int spineMaxExcl = lvl <= 0 ? 6
-                         : lvl <= 50  ? 3    // rng.Next(2,3) = always 2
-                         : lvl <= 100 ? 4    // rng.Next(2,4) = 2..3
+        int spineMaxExcl = lvl <= 0  ? 6
+                         : lvl <= 30  ? 3    // rng.Next(2,3) = always 2
+                         : lvl <= 80  ? 4    // rng.Next(2,4) = 2..3
                          : lvl <= 150 ? 5    // rng.Next(2,5) = 2..4
                          : 6;               // rng.Next(2,6) = 2..5
         int   spineCount    = rng.Next(2, spineMaxExcl);
@@ -1099,8 +1150,8 @@ public class ShipLayoutGenerator : MonoBehaviour
         // Using spineCount (exclusive upper) ensures at least one corridor
         // always follows the CargoBay before Engineering.
         int   cargoAfterIdx = rng.Next(1, spineCount);
-        float sLenMin = lvl > 0 && lvl <= 50 ? 4f : 6f;
-        float sLenMax = lvl > 0 && lvl <= 50 ? 9f : 14f;
+        float sLenMin = lvl > 0 && lvl <= 40 ? 4f : 6f;
+        float sLenMax = lvl > 0 && lvl <= 40 ? 8f : 14f;
         float[] sLen = new float[spineCount];
         for (int i = 0; i < spineCount; i++)
             sLen[i] = RngRange(rng, sLenMin, sLenMax);
@@ -1128,9 +1179,9 @@ public class ShipLayoutGenerator : MonoBehaviour
         float engFr = engBk + engD;
 
         // Branch geometry — scale branch count with training level
-        int branchMaxExcl = lvl <= 0 ? 4
+        int branchMaxExcl = lvl <= 0  ? 4
                            : lvl <= 50  ? 2    // rng.Next(1,2) = always 1
-                           : lvl <= 100 ? 3    // rng.Next(1,3) = 1..2
+                           : lvl <= 120 ? 3    // rng.Next(1,3) = 1..2
                            : 4;               // rng.Next(1,4) = 1..3
         int branchCount = rng.Next(1, branchMaxExcl);
         float[] bX       = new float[branchCount];
@@ -1417,10 +1468,11 @@ public class ShipLayoutGenerator : MonoBehaviour
         };
         float[] pRW = { 6f, 4f, 5f, 6f, 4f, 5f, 5f, 7f, 6f, 6f };
         float[] pRD = { 5f, 4f, 4f, 5f, 4f, 5f, 4f, 5f, 6f, 5f };
-        int poolSize = lvl <= 0 ? pName.Length
-                     : lvl <= 50  ? Mathf.Min(3, pName.Length)
-                     : lvl <= 100 ? Mathf.Min(6, pName.Length)
-                     : pName.Length;
+        int poolSize = lvl <= 0  ? pName.Length
+                     : lvl <= 40  ? Mathf.Min(2, pName.Length)   // just 2 room types
+                     : lvl <= 90  ? Mathf.Min(4, pName.Length)   // 4 room types
+                     : lvl <= 140 ? Mathf.Min(7, pName.Length)   // 7 room types
+                     : pName.Length;                              // all room types
         int[] pidx = new int[poolSize];
         for (int i = 0; i < poolSize; i++) pidx[i] = i;
         for (int i = poolSize - 1; i > 0; i--)

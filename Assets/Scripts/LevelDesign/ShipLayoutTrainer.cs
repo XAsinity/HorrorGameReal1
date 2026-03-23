@@ -125,24 +125,31 @@ public class ShipLayoutTrainer : MonoBehaviour
         bool cancelled = false;
         for (int gen = 0; gen < generations; gen++)
         {
-#if UNITY_EDITOR
-            // Update cancellable progress bar — shows real progress and lets the user cancel
-            float progress = (float)gen / generations;
-            string barInfo = string.Format("Generation {0}/{1} — Best Fitness: {2:F3}",
-                gen + 1, generations, float.IsNegativeInfinity(bestEver) ? 0f : bestEver);
-            if (EditorUtility.DisplayCancelableProgressBar("Training Layout AI", barInfo, progress))
-            {
-                Debug.LogWarning(string.Format(
-                    "[ProcGen:Train] <color=#ff9900>Training cancelled by user at generation {0}/{1}.</color>  Best fitness so far: {2:F1}",
-                    gen + 1, generations, float.IsNegativeInfinity(bestEver) ? 0f : bestEver));
-                cancelled = true;
-                break;
-            }
-#endif
-
             // Evaluate each individual — pass generation as training level for level-scaled complexity
             for (int i = 0; i < populationSize; i++)
+            {
                 fitnesses[i] = EvaluateGenome(pop[i], seedsPerIndividual, rng, gen + 1);
+
+#if UNITY_EDITOR
+                // Check for cancel after each individual (every seedsPerIndividual layouts)
+                // rather than waiting until the entire generation finishes.
+                float innerProgress = ((float)gen + (float)(i + 1) / populationSize) / generations;
+                string innerInfo = string.Format(
+                    "Generation {0}/{1} — Individual {2}/{3} — Best Fitness: {4:F3}",
+                    gen + 1, generations, i + 1, populationSize,
+                    float.IsNegativeInfinity(bestEver) ? 0f : bestEver);
+                if (EditorUtility.DisplayCancelableProgressBar("Training Layout AI", innerInfo, innerProgress))
+                {
+                    Debug.LogWarning(string.Format(
+                        "[ProcGen:Train] <color=#ff9900>Training cancelled by user at generation {0}/{1}, individual {2}/{3}.</color>  Best fitness so far: {4:F1}",
+                        gen + 1, generations, i + 1, populationSize,
+                        float.IsNegativeInfinity(bestEver) ? 0f : bestEver));
+                    cancelled = true;
+                    break;
+                }
+#endif
+            }
+            if (cancelled) break;
 
             // Sort descending by fitness
             System.Array.Sort(fitnesses, pop,
