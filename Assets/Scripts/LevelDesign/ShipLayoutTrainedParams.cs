@@ -68,7 +68,7 @@ public class ShipLayoutTrainedParams : ScriptableObject
     public float branchChance = 0.3f;
     [Range(1, 8)]
     [Tooltip("Maximum branches that can fork off engineering.")]
-    public int maxBranchDepth = 3;
+    public int maxBranchDepth = 8;
     [Range(0f, 1f)]
     [Tooltip("Chance a spine corridor gets at least one side room.")]
     public float sideRoomChance = 0.6f;
