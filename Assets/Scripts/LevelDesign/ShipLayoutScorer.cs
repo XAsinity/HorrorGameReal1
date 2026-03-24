@@ -26,6 +26,12 @@ public static class ShipLayoutScorer
     private const float W_ALL_CLEAN         = +15f;  // bonus for zero diagnostics
     private const float W_FULL_ROOMS        = +10f;  // bonus when no rooms are skipped
 
+    // Level-scaled overlap penalty escalation constants
+    // At high levels the AI is more strongly penalised for geometry intersections
+    // to discourage it from sacrificing correctness for extra rooms/branches.
+    private const float OVERLAP_PENALTY_PER_LEVEL          = 0.10f;  // added to W_OVERLAP magnitude per level
+    private const float CORRIDOR_OVERLAP_PENALTY_PER_LEVEL = 0.15f;  // added to W_CORRIDOR_OVERLAP magnitude per level
+
     private const float W_MIXED_PATTERNS    = +5f;   // bonus for having at least one each of Z + non-Z
     private const float W_PATTERN_MONOTONY  = -8f;   // penalty when ALL branches share the same pattern
 
@@ -47,6 +53,9 @@ public static class ShipLayoutScorer
     private const float W_LONG_SPINE            = +8f;    // bonus when spineCount >= 4 at high levels
     private const float W_ROOM_COUNT_VERY_HIGH  = -15f;   // penalty for small rooms at trainingLevel > 160
     private const float LEVEL_SCALE_DIV         =  50f;   // divisor for level-scaled map size reward; at level 200 with 30 rooms: 30*200/50*0.5=60 pts
+    // Per-level bonus weights for spine and branch counts at high levels
+    private const float SPINE_BONUS_PER_LEVEL   = 0.05f;  // LastSpineCount  × trainingLevel × this when trainingLevel > 100
+    private const float BRANCH_BONUS_PER_LEVEL  = 0.08f;  // LastBranchCount × trainingLevel × this when trainingLevel > 100
 
     // ── Public API ────────────────────────────────────────────────────────────
 
@@ -82,9 +91,11 @@ public static class ShipLayoutScorer
         // No penalty for straight branches — they are valid fallbacks
         score += s.TerminalsCapped  * W_TERMINAL_CAPPED;
         score += (s.BranchCount - s.TerminalsCapped) * W_TERMINAL_PLACED;
-        score += s.OverlapCount     * W_OVERLAP;
+        // Level-scaled overlap penalties: base flat weight plus a per-level escalation
+        // so the AI is progressively more punished for intersections at higher levels.
+        score += s.OverlapCount     * (W_OVERLAP          - trainingLevel * OVERLAP_PENALTY_PER_LEVEL);
         score += s.GapCount         * W_GAP;
-        score += s.CorridorOverlaps * W_CORRIDOR_OVERLAP;
+        score += s.CorridorOverlaps * (W_CORRIDOR_OVERLAP - trainingLevel * CORRIDOR_OVERLAP_PENALTY_PER_LEVEL);
         score += s.VentRoomOverlaps * W_VENT_OVERLAP;
 
         // ── Scale-aware rewards ──────────────────────────────────────────────
@@ -199,6 +210,13 @@ public static class ShipLayoutScorer
         // Composite map size reward — total rooms + branch weight + spine weight, level-scaled
         if (trainingLevel > 0)
             score += (s.RoomsPlaced + s.BranchCount * 2 + s.SpineCount) * (trainingLevel / 100f) * 2f;
+
+        // Explicit map scale bonus at high levels — strongly incentivise large maps
+        if (trainingLevel > 100)
+        {
+            score += gen.LastSpineCount  * trainingLevel * SPINE_BONUS_PER_LEVEL;
+            score += gen.LastBranchCount * trainingLevel * BRANCH_BONUS_PER_LEVEL;
+        }
 
         // Reward many branches at high levels
         if (trainingLevel > 120 && s.BranchCount >= 4) score += W_MANY_BRANCHES;
