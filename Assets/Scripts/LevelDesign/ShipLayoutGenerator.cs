@@ -558,19 +558,15 @@ public class ShipLayoutGenerator : MonoBehaviour
         if (scoringOnly) return;
         GameObject obj = new GameObject(name);
         obj.transform.SetParent(transform);
-        // Use 60° instead of 90° so the drop is a gradual ramp players can crawl through
-        // rather than a sharp vertical cut.  Depth is extended so the ramp covers the
-        // same vertical distance as the original 90° drop (depth = h / sin(60°)).
-        const float kVentAngle  = 60f;
-        const float kSin60      = 0.866025f; // sin(60°) pre-computed to avoid per-call trig
-        float adjustedDepth = h / kSin60;
-        // At 60° the shaft still needs the cross-section centred at z; subtract w/2
-        // to keep the footprint aligned with the horizontal vent trunk above.
+        // After Quaternion.Euler(90,0,0) the shaft's local Y axis maps to World +Z.
+        // The shaft is bottom-anchored (local Y spans 0..w), so without correction it
+        // would extend from z to z+w.  Subtract w/2 to centre the cross-section at z.
         obj.transform.localPosition = new Vector3(x, y, z - w / 2f);
-        obj.transform.localRotation = Quaternion.Euler(kVentAngle, 0, 0);
+        obj.transform.localRotation = Quaternion.Euler(90, 0, 0);
         ShipModuleGenerator gen = obj.AddComponent<ShipModuleGenerator>();
         gen.moduleType = ShipModuleGenerator.ModuleType.VentShaft;
-        gen.width = w; gen.height = w; gen.depth = adjustedDepth;
+        // After 90° X rotation the shaft's depth axis becomes vertical; keep cross-section square (w×w).
+        gen.width = w; gen.height = w; gen.depth = h;
         gen.wallThickness = wallThickness; gen.detailLevel = detailLevel;
         gen.overrideMaterial = prototypeMaterial; gen.Generate();
     }
