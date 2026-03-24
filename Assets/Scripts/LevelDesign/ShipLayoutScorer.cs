@@ -41,6 +41,14 @@ public static class ShipLayoutScorer
     private const float W_BUDGET_MET        = +10f;  // bonus when rooms placed ≥ 80 % of target budget
     private const float W_DEAD_END          = -2f;   // mild penalty per capped corridor (dead-end)
 
+    // Map physical size rewards (level-scaled)
+    private const float W_MAP_SCALE_PER_ROOM    = +0.5f;  // rooms placed × trainingLevel / LEVEL_SCALE_DIV × this weight
+    private const float W_MANY_BRANCHES         = +10f;   // bonus when branchCount >= 4 at high levels
+    private const float W_LONG_SPINE            = +8f;    // bonus when spineCount >= 4 at high levels
+    private const float W_ROOM_COUNT_VERY_HIGH  = -15f;   // penalty for small rooms at trainingLevel > 160
+    private const float W_BRANCH_COUNT_HIGH     = -10f;   // penalty for too few branches at trainingLevel > 180
+    private const float LEVEL_SCALE_DIV         =  50f;   // divisor for level-scaled map size reward; at level 200 with 30 rooms: 30*200/50*0.5=60 pts
+
     // ── Public API ────────────────────────────────────────────────────────────
 
     /// <summary>Computes and returns a score for the most-recently generated layout.</summary>
@@ -58,6 +66,7 @@ public static class ShipLayoutScorer
         s.LShapeCount       = gen.LastLShapeCount;
         s.StraightCount     = gen.LastStraightCount;
         s.BranchCount       = gen.LastBranchCount;
+        s.SpineCount        = gen.LastSpineCount;
         s.VentCutsMade      = gen.LastVentCutsMade;
         s.TerminalsCapped   = gen.LastTerminalsCapped;
         s.ActualSeed        = gen.LastActualSeed;
@@ -157,7 +166,23 @@ public static class ShipLayoutScorer
         //   lvl > 80  → medium complexity,  lvl > 120 → large,  lvl > 160 → full
         if (trainingLevel > 80  && s.RoomsPlaced < minRoomsForMediumTier) score -= 5f;
         if (trainingLevel > 120 && s.RoomsPlaced < minRoomsForLargeTier)  score -= 8f;
+        if (trainingLevel > 160 && s.RoomsPlaced < minRoomsForLargeTier)  score += W_ROOM_COUNT_VERY_HIGH;  // harsher at very high level
         if (trainingLevel > 160 && s.BranchCount < 2)                     score -= 5f;
+        if (trainingLevel > 180 && s.BranchCount < 3)                     score += W_BRANCH_COUNT_HIGH;
+
+        // ── Map physical size rewards (level-scaled) ──────────────────────────
+        // Reward rooms placed proportional to training level — the higher the level,
+        // the stronger the incentive to build bigger maps.
+        if (trainingLevel > 0)
+            score += (s.RoomsPlaced * trainingLevel / LEVEL_SCALE_DIV) * W_MAP_SCALE_PER_ROOM;
+
+        // Reward many branches at high levels
+        if (trainingLevel > 120 && s.BranchCount >= 4) score += W_MANY_BRANCHES;
+        if (trainingLevel > 120 && s.BranchCount >= 5) score += W_MANY_BRANCHES; // extra for 5+
+
+        // Reward many spine corridors at high levels
+        if (trainingLevel > 100 && s.SpineCount >= 4) score += W_LONG_SPINE;
+        if (trainingLevel > 100 && s.SpineCount >= 6) score += W_LONG_SPINE; // extra for 6+
 
         s.Total = score;
         return s;
@@ -194,6 +219,7 @@ public static class ShipLayoutScorer
         public int   LShapeCount;
         public int   StraightCount;
         public int   BranchCount;
+        public int   SpineCount;
         public int   VentCutsMade;
         public int   TerminalsCapped;
         public int   ActualSeed;

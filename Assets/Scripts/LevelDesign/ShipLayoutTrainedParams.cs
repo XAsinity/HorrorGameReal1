@@ -14,7 +14,7 @@ public class ShipLayoutTrainedParams : ScriptableObject
     public Vector2 corridorWidthRange  = new Vector2(2.5f, 3.5f);
     public Vector2 corridorHeightRange = new Vector2(2.5f, 3.2f);
     public Vector2 roomHeightRange     = new Vector2(3.0f, 3.5f);
-    public Vector2 spineLenRange       = new Vector2(6f,  14f);
+    public Vector2 spineLenRange       = new Vector2(6f,  30f);
 
     [Header("Major Rooms")]
     public Vector2 dockWRange  = new Vector2(14f, 18f);
@@ -32,9 +32,9 @@ public class ShipLayoutTrainedParams : ScriptableObject
     [Header("Branch Configuration")]
     [Range(1, 3)] public int branchCountMin = 1;
     [Range(1, 3)] public int branchCountMax = 3;
-    public Vector2 zStrLenRange    = new Vector2(4f,  8f);
-    public Vector2 zSideLenRange   = new Vector2(5f, 12f);
-    public Vector2 zFinLenRange    = new Vector2(5f, 10f);
+    public Vector2 zStrLenRange    = new Vector2(4f, 18f);
+    public Vector2 zSideLenRange   = new Vector2(5f, 25f);
+    public Vector2 zFinLenRange    = new Vector2(5f, 22f);
 
     [Header("Placement Biases  (0=always skip, 1=always place)")]
     [Range(0f, 1f)] public float spineRoomBias    = 0.75f; // 1 - original 0.25 skip chance
@@ -66,7 +66,7 @@ public class ShipLayoutTrainedParams : ScriptableObject
     [Range(0f, 1f)]
     [Tooltip("Chance that each available branch slot off engineering is filled.")]
     public float branchChance = 0.3f;
-    [Range(1, 5)]
+    [Range(1, 8)]
     [Tooltip("Maximum branches that can fork off engineering.")]
     public int maxBranchDepth = 3;
     [Range(0f, 1f)]
