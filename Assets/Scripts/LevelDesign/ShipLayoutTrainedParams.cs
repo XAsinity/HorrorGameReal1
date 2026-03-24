@@ -30,8 +30,8 @@ public class ShipLayoutTrainedParams : ScriptableObject
     public Vector2 engHRange = new Vector2( 4f,  5f);
 
     [Header("Branch Configuration")]
-    [Range(1, 3)] public int branchCountMin = 1;
-    [Range(1, 3)] public int branchCountMax = 3;
+    [Range(1, 8)] public int branchCountMin = 1;
+    [Range(1, 8)] public int branchCountMax = 6;
     public Vector2 zStrLenRange    = new Vector2(4f, 18f);
     public Vector2 zSideLenRange   = new Vector2(5f, 25f);
     public Vector2 zFinLenRange    = new Vector2(5f, 22f);

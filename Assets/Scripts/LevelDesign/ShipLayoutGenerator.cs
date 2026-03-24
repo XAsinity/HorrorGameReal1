@@ -1158,7 +1158,9 @@ public class ShipLayoutGenerator : MonoBehaviour
         // On the first attempt capture the base seed; on retries mutate it via an LCG step.
         if (_procRetries == 0)
             _procBaseSeed = seed < 0 ? System.Environment.TickCount : seed;
-        int actualSeed = _procBaseSeed;
+        // Mix the training level into the seed so that different levels always produce
+        // different RNG sequences even when the same base seed is used.
+        int actualSeed = _procBaseSeed ^ (int)((uint)(currentTrainingLevel * 2654435761u));
         for (int i = 0; i < _procRetries; i++)
             actualSeed = (int)(unchecked((long)actualSeed * 6364136223846793005L + 1442695040888963407L) & 0x7FFFFFFF);
         System.Random rng = new System.Random(actualSeed);
@@ -1243,24 +1245,34 @@ public class ShipLayoutGenerator : MonoBehaviour
         float bridgeW = RngRange(rng,  9f, 12f);
         float bridgeD = RngRange(rng,  7f, 10f);
 
-        // ── Spine count: derived from room budget ─────────────────────────────
+        // ── Spine count: derived from room budget AND training level ──────────
         // Each spine corridor "costs" about 2 room-budget units (the corridor itself
         // + at least one side room at medium levels).  Clamp to a sane range.
-        // At small budgets (<10) use 2 corridors; scale up to 5 at large budgets.
+        // At small budgets (<10) use 2 corridors; scale up with level at large budgets.
+        // spineMaxExcl is the exclusive upper bound for rng.Next(2, spineMaxExcl).
+        int spineMaxExcl = lvl <= 0  ? 6
+                         : lvl <= 30  ? 3
+                         : lvl <= 80  ? 5
+                         : lvl <= 150 ? 7
+                         : 11; // rng.Next(2,11) = 2..10 spines at level 200
         int spineCount = roomBudget <= 0  ? rng.Next(2, 6)
                        : roomBudget <= 8  ? 2
                        : roomBudget <= 14 ? rng.Next(2, 4)    // 2–3
                        : roomBudget <= 22 ? rng.Next(2, 5)    // 2–4
-                       : rng.Next(2, Mathf.Min(2 + roomBudget / 4, 10) + 1); // scales up to 2–11
+                       : rng.Next(2, spineMaxExcl);           // level-scaled upper bound
         // cargoAfterIdx: insert cargo after corridor [cargoAfterIdx-1].
         // Using spineCount (exclusive upper) ensures at least one corridor
         // always follows the CargoBay before Engineering.
         int   cargoAfterIdx = rng.Next(1, spineCount);
         // ── Corridor lengths from trainedParams ranges ────────────────────────
-        float sLenMin = (trainedParams != null) ? trainedParams.spineLenRange.x : 6f;
-        float sLenMax = (trainedParams != null) ? trainedParams.spineLenRange.y : 14f;
+        // Fallback defaults scale with level: early maps stay compact; high-level maps
+        // can have much longer corridors.
+        float sLenMin = (trainedParams != null) ? trainedParams.spineLenRange.x
+                      : (lvl > 0 && lvl <= 40 ? 4f : (lvl > 150 ? 10f : 6f));
+        float sLenMax = (trainedParams != null) ? trainedParams.spineLenRange.y
+                      : (lvl > 0 && lvl <= 40 ? 8f : (lvl > 150 ? 25f : 14f));
         // Cap lengths only at very small budgets so early-training maps stay compact.
-        if (lvl > 0 && roomBudget <= 5) { sLenMin = Mathf.Min(sLenMin, 4f); sLenMax = Mathf.Min(sLenMax, 8f); }
+        if (lvl > 0 && lvl <= 40 && roomBudget <= 5) { sLenMin = Mathf.Min(sLenMin, 4f); sLenMax = Mathf.Min(sLenMax, 8f); }
         float[] sLen = new float[spineCount];
         for (int i = 0; i < spineCount; i++)
             sLen[i] = RngRange(rng, sLenMin, sLenMax);
@@ -1293,7 +1305,7 @@ public class ShipLayoutGenerator : MonoBehaviour
         int maxBranchesForBudget = roomBudget <= 0  ? 3
                                  : roomBudget <= 8  ? 1
                                  : roomBudget <= 14 ? 2
-                                 : Mathf.Clamp(roomBudget / 5, 2, tp_maxBranchDepth);
+                                 : Mathf.Clamp(roomBudget / 5, 3, tp_maxBranchDepth);
         int branchUpperBound = Mathf.Clamp(maxBranchesForBudget, 1, tp_maxBranchDepth);
         // branchChance gates whether we pick 1 branch (low) or up to the cap (high).
         // At branchChance=0 always 1; at 1.0 always branchUpperBound.
@@ -1346,12 +1358,13 @@ public class ShipLayoutGenerator : MonoBehaviour
             float patRoll = (float)rng.NextDouble();
             bPat[b]     = patRoll < tp_zBiasCeil ? 1 : (patRoll < tp_lBiasCeil ? 2 : 0);
             // Use trainedParams Z-shape segment length ranges when available.
-            float strMin  = (trainedParams != null) ? trainedParams.zStrLenRange.x  : 4f;
-            float strMax  = (trainedParams != null) ? trainedParams.zStrLenRange.y  : 8f;
-            float sideMin = (trainedParams != null) ? trainedParams.zSideLenRange.x : 5f;
-            float sideMax = (trainedParams != null) ? trainedParams.zSideLenRange.y : 12f;
-            float finMin  = (trainedParams != null) ? trainedParams.zFinLenRange.x  : 5f;
-            float finMax  = (trainedParams != null) ? trainedParams.zFinLenRange.y  : 10f;
+            // Fallback defaults scale with level: at high levels allow much longer branch corridors.
+            float strMin  = (trainedParams != null) ? trainedParams.zStrLenRange.x  : (lvl > 150 ? 6f  : 4f);
+            float strMax  = (trainedParams != null) ? trainedParams.zStrLenRange.y  : (lvl > 150 ? 16f : 8f);
+            float sideMin = (trainedParams != null) ? trainedParams.zSideLenRange.x : (lvl > 150 ? 8f  : 5f);
+            float sideMax = (trainedParams != null) ? trainedParams.zSideLenRange.y : (lvl > 150 ? 20f : 12f);
+            float finMin  = (trainedParams != null) ? trainedParams.zFinLenRange.x  : (lvl > 150 ? 6f  : 5f);
+            float finMax  = (trainedParams != null) ? trainedParams.zFinLenRange.y  : (lvl > 150 ? 16f : 10f);
             bStrLen[b]  = RngRange(rng, strMin,  strMax);
             bSideLen[b] = RngRange(rng, sideMin, sideMax);
             bFinLen[b]  = RngRange(rng, finMin,  finMax);
