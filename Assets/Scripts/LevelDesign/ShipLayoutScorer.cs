@@ -19,7 +19,7 @@ public static class ShipLayoutScorer
     // W_ALL_Z_SHAPE removed    — directly incentivised Z-spam
     private const float W_TERMINAL_PLACED    = +4f;   // each terminal room placed
     private const float W_TERMINAL_CAPPED    = -5f;   // each corridor end-cap (no terminal room)
-    private const float W_OVERLAP            = -10f;  // each geometry overlap detected
+    private const float W_OVERLAP            = -15f;  // each geometry overlap detected (harsher to discourage intersections)
     private const float W_GAP               = -5f;   // each wall gap detected
     private const float W_CORRIDOR_OVERLAP  = -25f;  // each corridor-vs-corridor intersection (severe)
     private const float W_VENT_OVERLAP      = -8f;   // each vent-branch clipping through a room (visual artifact, moderate penalty)
@@ -71,6 +71,7 @@ public static class ShipLayoutScorer
         s.ActualSeed        = gen.LastActualSeed;
         s.TargetRoomCount   = gen.LastTargetRoomCount;
         s.DeadEndCount      = gen.LastDeadEndCount;
+        s.QualityRetries    = gen.LastQualityRetries;
 
         // Base score
         float score = 0f;
@@ -135,6 +136,18 @@ public static class ShipLayoutScorer
             if (distinctPatterns >= 2)
                 score += W_BRANCH_VARIETY;
         }
+
+        // Specific all-straight penalty (beyond general monotony penalty) — boring layout
+        if (s.BranchCount > 1 && s.ZShapeCount == 0 && s.LShapeCount == 0)
+            score -= 10f;
+
+        // Reward diverse Z and L shapes (capped at 2 each to prevent gaming)
+        score += Mathf.Min(s.ZShapeCount, 2) * 3f;
+        score += Mathf.Min(s.LShapeCount, 2) * 3f;
+
+        // Left-right balance penalty — penalise lopsided room distribution
+        int roomBalance = Mathf.Abs(gen.LastRoomsLeftCount - gen.LastRoomsRightCount);
+        score -= roomBalance * 2f;
 
         // Structural common-sense rewards
         // Engineering side rooms (proxy: check via gen fields if available,
@@ -244,6 +257,7 @@ public static class ShipLayoutScorer
         // Scale-aware fields
         public int   TargetRoomCount;
         public int   DeadEndCount;
+        public int   QualityRetries; // number of AI quality/broken-layout retries performed
 
         public override string ToString() =>
             string.Format("Score={0:F1} rooms={1}/{2} target={3} Z={4} L={5} S={6} caps={7} diag={8}/{9}/{10} vent={11}",

@@ -41,6 +41,7 @@ public class ShipLayoutGenerator : MonoBehaviour
     [System.NonSerialized] public int LastStraightCount;
     [System.NonSerialized] public int LastBranchCount;
     [System.NonSerialized] public int LastSpineCount;
+    [System.NonSerialized] public int LastQualityRetries;
     [System.NonSerialized] public int LastVentCutsMade;
     [System.NonSerialized] public int LastTerminalsCapped;
     [System.NonSerialized] public int LastActualSeed;
@@ -1160,7 +1161,7 @@ public class ShipLayoutGenerator : MonoBehaviour
             _procBaseSeed = seed < 0 ? System.Environment.TickCount : seed;
         // Mix the training level into the seed so that different levels always produce
         // different RNG sequences even when the same base seed is used.
-        int actualSeed = _procBaseSeed ^ (int)((uint)(currentTrainingLevel * 2654435761u));
+        int actualSeed = _procBaseSeed ^ (int)((uint)currentTrainingLevel * 2654435761u);
         for (int i = 0; i < _procRetries; i++)
             actualSeed = (int)(unchecked((long)actualSeed * 6364136223846793005L + 1442695040888963407L) & 0x7FFFFFFF);
         System.Random rng = new System.Random(actualSeed);
@@ -1178,7 +1179,10 @@ public class ShipLayoutGenerator : MonoBehaviour
         // connection, so the parent corridor is excluded via excludeIdx rather than
         // relying on a large pad to separate them.  0.05 prevents rooms that would
         // otherwise share a wall face from being falsely rejected.
-        const float kPad  = 0.05f;
+        const float kPad       = 0.05f;
+        // Larger pad used exclusively for branch-to-branch geometry checks so
+        // branches maintain a visible gap between each other.
+        const float kBranchPad = 0.5f;
         float dW    = kDoorWidth;
         float dH    = kDoorHeight;
         float vY    = roomHeight;
@@ -1372,6 +1376,39 @@ public class ShipLayoutGenerator : MonoBehaviour
                         : bX[b] >  0.1f ? +1
                         : (rng.Next(2) == 0 ? -1 : +1);
 
+            // Encourage branch direction diversity — if consecutive branches initially
+            // point the same way, flip with 70 % probability so the layout varies.
+            if (b > 0 && bPat[b] != 0 && bPat[b - 1] != 0 && bSideDir[b] == bSideDir[b - 1])
+            {
+                if (rng.NextDouble() > 0.3)
+                    bSideDir[b] = -bSideDir[b];
+            }
+
+            // If this branch would extend laterally toward a sibling that is within
+            // corridorWidth * 2 of it, force it to straight so the side corridor
+            // cannot cut into the sibling's footprint.  Branches turning AWAY from
+            // a close sibling are allowed Z/L shapes.
+            bool tooClose = false;
+            float closeSiblingDist = 0f;
+            for (int a = 0; a < b; a++)
+            {
+                float separation = Mathf.Abs(bX[b] - bX[a]);
+                if (separation < corridorWidth * 2f)
+                {
+                    bool turningToward = (bX[b] > bX[a] && bSideDir[b] == -1) ||
+                                         (bX[b] < bX[a] && bSideDir[b] == +1);
+                    if (turningToward) { tooClose = true; closeSiblingDist = separation; break; }
+                }
+            }
+            if (tooClose)
+            {
+                bPat[b] = 0;
+                if (!scoringOnly)
+                    Debug.Log(string.Format(
+                        "[ProcGen:AI] Branch {0}: forced STRAIGHT — turning toward a sibling within {1:F1}m (min sep={2:F1}m).",
+                        b, closeSiblingDist, corridorWidth * 2f));
+            }
+
             float strFr = engFr + bStrLen[b];
 
             // ── AABB-based Z-shape fit check ────────────────────────────────
@@ -1447,10 +1484,10 @@ public class ShipLayoutGenerator : MonoBehaviour
                                                : bX[b] + HalfCor + testSideLen / 2f;
 
                             bool overlap =
-                                BoundsOverlap(branchSegBds, bX[b],    tCor1Z, corridorWidth / 2f, corridorWidth / 2f, kPad) ||
-                                BoundsOverlap(branchSegBds, tSideCX,  tCor1Z, testSideLen / 2f,   corridorWidth / 2f, kPad) ||
-                                BoundsOverlap(branchSegBds, tCor2X,   tCor1Z, corridorWidth / 2f, corridorWidth / 2f, kPad) ||
-                                BoundsOverlap(branchSegBds, tCor2X,   tFinCZ, corridorWidth / 2f, bFinLen[b] / 2f,   kPad);
+                                BoundsOverlap(branchSegBds, bX[b],    tCor1Z, corridorWidth / 2f, corridorWidth / 2f, kBranchPad) ||
+                                BoundsOverlap(branchSegBds, tSideCX,  tCor1Z, testSideLen / 2f,   corridorWidth / 2f, kBranchPad) ||
+                                BoundsOverlap(branchSegBds, tCor2X,   tCor1Z, corridorWidth / 2f, corridorWidth / 2f, kBranchPad) ||
+                                BoundsOverlap(branchSegBds, tCor2X,   tFinCZ, corridorWidth / 2f, bFinLen[b] / 2f,   kBranchPad);
 
                             if (!overlap)
                             {
@@ -1520,9 +1557,9 @@ public class ShipLayoutGenerator : MonoBehaviour
 
                             // L-shape: only C1 + side + C2 (no Fin corridor to check)
                             bool overlap =
-                                BoundsOverlap(branchSegBds, bX[b],    tCor1Z, corridorWidth / 2f, corridorWidth / 2f, kPad) ||
-                                BoundsOverlap(branchSegBds, tSideCX,  tCor1Z, testSideLen / 2f,   corridorWidth / 2f, kPad) ||
-                                BoundsOverlap(branchSegBds, tCor2X,   tCor1Z, corridorWidth / 2f, corridorWidth / 2f, kPad);
+                                BoundsOverlap(branchSegBds, bX[b],    tCor1Z, corridorWidth / 2f, corridorWidth / 2f, kBranchPad) ||
+                                BoundsOverlap(branchSegBds, tSideCX,  tCor1Z, testSideLen / 2f,   corridorWidth / 2f, kBranchPad) ||
+                                BoundsOverlap(branchSegBds, tCor2X,   tCor1Z, corridorWidth / 2f, corridorWidth / 2f, kBranchPad);
 
                             if (!overlap)
                             {
@@ -1608,6 +1645,61 @@ public class ShipLayoutGenerator : MonoBehaviour
             Debug.Log(string.Format(
                 "[ProcGen:AI] <b>Phase 1 complete</b>: {0}×Z-shape  {1}×L-shape  {2}×straight-fallback",
                 zCount, lCount, sCount));
+        }
+
+        // ── Post-placement overlap scan (safety net) ─────────────────────────
+        // After all branches are planned, check every branch's committed segments
+        // against every other branch's segments with the larger kBranchPad.
+        // Any branch whose segments overlap with a sibling is demoted to straight.
+        {
+            // Build per-branch segment lists for the post-scan.
+            var branchSegs = new System.Collections.Generic.List<Vector4>[branchCount];
+            for (int b = 0; b < branchCount; b++)
+            {
+                branchSegs[b] = new System.Collections.Generic.List<Vector4>();
+                // Straight corridor (present for all patterns)
+                float strCZ_b = engFr + bStrLen[b] / 2f;
+                branchSegs[b].Add(new Vector4(bX[b], strCZ_b, corridorWidth / 2f, bStrLen[b] / 2f));
+                if (bPat[b] != 0) // Z-shape or L-shape has lateral segments
+                {
+                    bool gl   = bSideDir[b] == -1;
+                    float sCXb = gl ? bX[b] - HalfCor - bSideLen[b] / 2f
+                                    : bX[b] + HalfCor + bSideLen[b] / 2f;
+                    branchSegs[b].Add(new Vector4(bX[b],     bCor1Z[b], corridorWidth / 2f, corridorWidth / 2f));
+                    branchSegs[b].Add(new Vector4(sCXb,      bCor1Z[b], bSideLen[b] / 2f,   corridorWidth / 2f));
+                    branchSegs[b].Add(new Vector4(bCor2X[b], bCor1Z[b], corridorWidth / 2f, corridorWidth / 2f));
+                    if (bPat[b] == 1) // Z-shape: add fin corridor
+                        branchSegs[b].Add(new Vector4(bCor2X[b], bFinCZ[b], corridorWidth / 2f, bFinLen[b] / 2f));
+                }
+            }
+            for (int b = 0; b < branchCount; b++)
+            {
+                if (bPat[b] == 0) continue; // straight branches can't be demoted further
+                bool demote = false;
+                for (int other = 0; other < branchCount && !demote; other++)
+                {
+                    if (other == b) continue;
+                    foreach (var segB in branchSegs[b])
+                    {
+                        foreach (var segO in branchSegs[other])
+                        {
+                            if (Mathf.Abs(segB.x - segO.x) < segB.z + segO.z + kBranchPad &&
+                                Mathf.Abs(segB.y - segO.y) < segB.w + segO.w + kBranchPad)
+                            { demote = true; break; }
+                        }
+                        if (demote) break;
+                    }
+                }
+                if (demote)
+                {
+                    bPat[b]    = 0;
+                    bTermBk[b] = engFr + bStrLen[b];
+                    bTermX[b]  = bX[b];
+                    if (!scoringOnly)
+                        Debug.LogWarning(string.Format(
+                            "[ProcGen:AI] POST-SCAN: Branch {0} overlaps a sibling — demoted to straight (safety net).", b));
+                }
+            }
         }
 
         // Room pool (Fisher-Yates shuffle for reproducibility)
@@ -2855,6 +2947,41 @@ public class ShipLayoutGenerator : MonoBehaviour
                          (roomsSkipped > roomsPlaced * 2 && roomsSkipped > 3) ||
                          (corridorOverlaps > 0);
         const int maxRetries = 5;
+
+        // ── Quality self-evaluation (AI regeneration tool) ────────────────────
+        // Compute a quick quality score. If the layout is below the level-scaled
+        // threshold and we have retries left, regenerate with a mutated seed.
+        // This gives the AI a second chance when the layout is technically valid
+        // but structurally poor (all straight branches, too few rooms, etc.).
+        if (!tooBroken && _procRetries < maxRetries && currentTrainingLevel > 0)
+        {
+            int   curFinalZCount = 0, curFinalLCount = 0;
+            for (int b = 0; b < branchCount; b++)
+            { if (bPat[b] == 1) curFinalZCount++; else if (bPat[b] == 2) curFinalLCount++; }
+            float qualityScore = roomsPlaced * 2f - roomsSkipped * 3f
+                               - overlapCount * 10f - corridorOverlaps * 8f
+                               + branchCount * 3f
+                               + (curFinalZCount + curFinalLCount) * 2f;
+            float minQuality = currentTrainingLevel * 0.15f;
+            if (qualityScore < minQuality)
+            {
+                if (!scoringOnly)
+                {
+                    Debug.Log(string.Format(
+                        "[ProcGen:AI] Quality {0:F1} below threshold {1:F1} — REGENERATING (retry {2}/5)",
+                        qualityScore, minQuality, _procRetries + 1));
+                    for (int ci = transform.childCount - 1; ci >= 0; ci--)
+                    {
+                        if (Application.isPlaying) Destroy(transform.GetChild(ci).gameObject);
+                        else DestroyImmediate(transform.GetChild(ci).gameObject);
+                    }
+                }
+                _procRetries++;
+                GenerateProceduralLayout();
+                return;
+            }
+        }
+
         if (tooBroken && _procRetries < maxRetries)
         {
             if (!scoringOnly)
@@ -2875,6 +3002,7 @@ public class ShipLayoutGenerator : MonoBehaviour
         }
         if (tooBroken && !scoringOnly)
             Debug.LogWarning("[ProcGen] Exhausted " + maxRetries + " retries. Using last generated layout.");
+        int qualityRetriesUsed = _procRetries;
         _procRetries = 0;
 
         // Tally branch patterns for stats and summary
@@ -2902,6 +3030,7 @@ public class ShipLayoutGenerator : MonoBehaviour
         LastTerminalsCapped  = terminalsCapped;
         LastActualSeed       = actualSeed;
         LastVentRoomOverlaps = ventRoomOverlaps;
+        LastQualityRetries   = qualityRetriesUsed;
         // Scale-aware stats
         LastTargetRoomCount  = targetRoomCount;
         LastDeadEndCount     = terminalsCapped; // corridors capped = dead ends without terminal rooms
@@ -2922,7 +3051,7 @@ public class ShipLayoutGenerator : MonoBehaviour
             Debug.Log("[ProcGen:AI] " + summarySep);
             Debug.Log(string.Format(
                 "[ProcGen:AI] <b>GENERATION COMPLETE</b>  Seed={0}{1}",
-                actualSeed, _procRetries > 0 ? "  (retry " + _procRetries + ")" : ""));
+                actualSeed, qualityRetriesUsed > 0 ? "  (retry " + qualityRetriesUsed + ")" : ""));
             Debug.Log(string.Format(
                 "[ProcGen:AI]   Budget : <b>{0} target rooms</b>  (base={1} + lvl{2}×{3:F2})",
                 targetRoomCount, tp_baseRoomBudget, lvl, tp_roomBudgetPerLvl));
