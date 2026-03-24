@@ -22,6 +22,7 @@ public static class ShipLayoutScorer
     private const float W_OVERLAP            = -10f;  // each geometry overlap detected
     private const float W_GAP               = -5f;   // each wall gap detected
     private const float W_CORRIDOR_OVERLAP  = -25f;  // each corridor-vs-corridor intersection (severe)
+    private const float W_VENT_OVERLAP      = -8f;   // each vent-branch clipping through a room (visual artifact, moderate penalty)
     private const float W_ALL_CLEAN         = +15f;  // bonus for zero diagnostics
     private const float W_FULL_ROOMS        = +10f;  // bonus when no rooms are skipped
 
@@ -52,6 +53,7 @@ public static class ShipLayoutScorer
         s.OverlapCount      = gen.LastOverlapCount;
         s.GapCount          = gen.LastGapCount;
         s.CorridorOverlaps  = gen.LastCorridorOverlaps;
+        s.VentRoomOverlaps  = gen.LastVentRoomOverlaps;
         s.ZShapeCount       = gen.LastZShapeCount;
         s.LShapeCount       = gen.LastLShapeCount;
         s.StraightCount     = gen.LastStraightCount;
@@ -74,6 +76,7 @@ public static class ShipLayoutScorer
         score += s.OverlapCount     * W_OVERLAP;
         score += s.GapCount         * W_GAP;
         score += s.CorridorOverlaps * W_CORRIDOR_OVERLAP;
+        score += s.VentRoomOverlaps * W_VENT_OVERLAP;
 
         // ── Scale-aware rewards ──────────────────────────────────────────────
         // Room placement ratio — reward high success rate regardless of map size
@@ -95,7 +98,7 @@ public static class ShipLayoutScorer
         score += s.DeadEndCount * W_DEAD_END;
 
         // Bonus awards
-        bool clean = (s.OverlapCount == 0 && s.GapCount == 0 && s.CorridorOverlaps == 0);
+        bool clean = (s.OverlapCount == 0 && s.GapCount == 0 && s.CorridorOverlaps == 0 && s.VentRoomOverlaps == 0);
         if (clean)                                        score += W_ALL_CLEAN;
         if (s.RoomsSkipped == 0)                          score += W_FULL_ROOMS;
 
@@ -186,6 +189,7 @@ public static class ShipLayoutScorer
         public int   OverlapCount;
         public int   GapCount;
         public int   CorridorOverlaps;
+        public int   VentRoomOverlaps;
         public int   ZShapeCount;
         public int   LShapeCount;
         public int   StraightCount;
@@ -198,9 +202,9 @@ public static class ShipLayoutScorer
         public int   DeadEndCount;
 
         public override string ToString() =>
-            string.Format("Score={0:F1} rooms={1}/{2} target={3} Z={4} L={5} S={6} caps={7} diag={8}/{9}/{10}",
+            string.Format("Score={0:F1} rooms={1}/{2} target={3} Z={4} L={5} S={6} caps={7} diag={8}/{9}/{10} vent={11}",
                 Total, RoomsPlaced, RoomsPlaced + RoomsSkipped, TargetRoomCount,
                 ZShapeCount, LShapeCount, StraightCount, TerminalsCapped,
-                OverlapCount, GapCount, CorridorOverlaps);
+                OverlapCount, GapCount, CorridorOverlaps, VentRoomOverlaps);
     }
 }

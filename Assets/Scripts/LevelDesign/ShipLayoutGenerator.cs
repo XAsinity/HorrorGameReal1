@@ -51,6 +51,8 @@ public class ShipLayoutGenerator : MonoBehaviour
     // Scale-aware stats — written by GenerateProceduralLayout for the scale-aware scorer
     [System.NonSerialized] public int LastTargetRoomCount;   // budget target rooms
     [System.NonSerialized] public int LastDeadEndCount;      // corridors capped without a terminal room
+    // Vent-room geometry overlap stat
+    [System.NonSerialized] public int LastVentRoomOverlaps;  // horizontal vent branches clipping a room AABB
 
     /// <summary>
     /// Set by ShipLayoutTrainer before each evaluation to scale procedural map complexity
@@ -896,6 +898,39 @@ public class ShipLayoutGenerator : MonoBehaviour
         return false;
     }
 
+    // ═══════════════════════════════════════════════════════════════
+    //  Counts how many registered room AABBs a horizontal vent segment
+    //  overlaps in the XZ plane.  roomCX/roomCZ identify the room the
+    //  vent is intentionally entering so it can be excluded from the
+    //  check.  Each entry in 'bds' is (centreX, centreZ, halfW, halfD).
+    // ═══════════════════════════════════════════════════════════════
+    private static int CountVentOverlaps(System.Collections.Generic.List<Vector4> bds,
+        float x1, float z1, float x2, float z2, float ventHalfW, float roomCX, float roomCZ)
+    {
+        // Identify the destination room to exclude (exact match with small float tolerance).
+        int excludeIdx = -1;
+        for (int i = 0; i < bds.Count; i++)
+        {
+            if (Mathf.Abs(bds[i].x - roomCX) < 0.01f && Mathf.Abs(bds[i].y - roomCZ) < 0.01f)
+            { excludeIdx = i; break; }
+        }
+        // Vent segment AABB in XZ space.
+        float cxV = (x1 + x2) * 0.5f;
+        float czV = (z1 + z2) * 0.5f;
+        float hwV = Mathf.Abs(x2 - x1) * 0.5f + ventHalfW;
+        float hdV = Mathf.Abs(z2 - z1) * 0.5f + ventHalfW;
+        int count = 0;
+        for (int i = 0; i < bds.Count; i++)
+        {
+            if (i == excludeIdx) continue;
+            var p = bds[i];
+            if (Mathf.Abs(cxV - p.x) < hwV + p.z &&
+                Mathf.Abs(czV - p.y) < hdV + p.w)
+                count++;
+        }
+        return count;
+    }
+
 
     // ═══════════════════════════════════════════════════════════════
     //  DATA STRUCTURES FOR INTELLIGENT PROCEDURAL GENERATION
@@ -1151,7 +1186,7 @@ public class ShipLayoutGenerator : MonoBehaviour
 
         // World-space AABB registry: (centerX, centerZ, halfW, halfD)
         var bds = new System.Collections.Generic.List<Vector4>();
-        int roomsPlaced = 0, roomsSkipped = 0, ventSegs = 0, ventCutsMade = 0;
+        int roomsPlaced = 0, roomsSkipped = 0, ventSegs = 0, ventCutsMade = 0, ventRoomOverlaps = 0;
 
         // ── Resolve trainedParams with fallback defaults ──────────────────────
         // All structural decisions (bias, counts, budget) flow through these local
@@ -2203,6 +2238,7 @@ public class ShipLayoutGenerator : MonoBehaviour
                 if (sHL[i])
                 {
                     ConnectVent("VB_SL" + i, -hvW, vY, sCZ[i], sLX[i] + hvW, vY, sCZ[i]); ventSegs++;
+                    ventRoomOverlaps += CountVentOverlaps(bds, -hvW, sCZ[i], sLX[i] + hvW, sCZ[i], ventW * 0.5f, sLX[i], sCZ[i]);
                     AddVentElbow("VElbow_SL" + i, sLX[i], vY, sCZ[i], true, true, true, false);
                     AddVentVertical("VDrop_SL" + i, sLX[i], dropY, sCZ[i], dropW, dropH, dropW);
                     CutCeilingForVent(sLGen[i], dropW, dropW); ventCutsMade++;
@@ -2210,6 +2246,7 @@ public class ShipLayoutGenerator : MonoBehaviour
                 if (sHR[i])
                 {
                     ConnectVent("VB_SR" + i, hvW, vY, sCZ[i], sRX[i] - hvW, vY, sCZ[i]); ventSegs++;
+                    ventRoomOverlaps += CountVentOverlaps(bds, hvW, sCZ[i], sRX[i] - hvW, sCZ[i], ventW * 0.5f, sRX[i], sCZ[i]);
                     AddVentElbow("VElbow_SR" + i, sRX[i], vY, sCZ[i], true, true, false, true);
                     AddVentVertical("VDrop_SR" + i, sRX[i], dropY, sCZ[i], dropW, dropH, dropW);
                     CutCeilingForVent(sRGen[i], dropW, dropW); ventCutsMade++;
@@ -2237,6 +2274,7 @@ public class ShipLayoutGenerator : MonoBehaviour
             if (engHR)
             {
                 ConnectVent("VB_React", hvW, vY, engCZ, reactX - hvW, vY, engCZ); ventSegs++;
+                ventRoomOverlaps += CountVentOverlaps(bds, hvW, engCZ, reactX - hvW, engCZ, ventW * 0.5f, reactX, engCZ);
                 AddVentElbow("VElbow_React", reactX, vY, engCZ, true, true, false, true);
                 AddVentVertical("VDrop_React", reactX, dropY, engCZ, dropW, dropH, dropW);
                 CutCeilingForVent(engReactGen, dropW, dropW); ventCutsMade++;
@@ -2244,6 +2282,7 @@ public class ShipLayoutGenerator : MonoBehaviour
             if (engHL)
             {
                 ConnectVent("VB_Lab", -hvW, vY, engCZ, labX + hvW, vY, engCZ); ventSegs++;
+                ventRoomOverlaps += CountVentOverlaps(bds, -hvW, engCZ, labX + hvW, engCZ, ventW * 0.5f, labX, engCZ);
                 AddVentElbow("VElbow_Lab", labX, vY, engCZ, true, true, true, false);
                 AddVentVertical("VDrop_Lab", labX, dropY, engCZ, dropW, dropH, dropW);
                 CutCeilingForVent(engLabGen, dropW, dropW); ventCutsMade++;
@@ -2344,6 +2383,7 @@ public class ShipLayoutGenerator : MonoBehaviour
                     if (bHL[b])
                     {
                         ConnectVent("VBL" + b, bCor2X[b] - hvW, vY, bFinCZ[b], bLX[b] + hvW, vY, bFinCZ[b]); ventSegs++;
+                        ventRoomOverlaps += CountVentOverlaps(bds, bCor2X[b] - hvW, bFinCZ[b], bLX[b] + hvW, bFinCZ[b], ventW * 0.5f, bLX[b], bFinCZ[b]);
                         AddVentElbow("VElbow_BL" + b, bLX[b], vY, bFinCZ[b], true, true, true, false);
                         AddVentVertical("VDrop_BL" + b, bLX[b], dropY, bFinCZ[b], dropW, dropH, dropW);
                         CutCeilingForVent(bLGen[b], dropW, dropW); ventCutsMade++;
@@ -2351,6 +2391,7 @@ public class ShipLayoutGenerator : MonoBehaviour
                     if (bHR[b])
                     {
                         ConnectVent("VBR" + b, bCor2X[b] + hvW, vY, bFinCZ[b], bRX[b] - hvW, vY, bFinCZ[b]); ventSegs++;
+                        ventRoomOverlaps += CountVentOverlaps(bds, bCor2X[b] + hvW, bFinCZ[b], bRX[b] - hvW, bFinCZ[b], ventW * 0.5f, bRX[b], bFinCZ[b]);
                         AddVentElbow("VElbow_BR" + b, bRX[b], vY, bFinCZ[b], true, true, false, true);
                         AddVentVertical("VDrop_BR" + b, bRX[b], dropY, bFinCZ[b], dropW, dropH, dropW);
                         CutCeilingForVent(bRGen[b], dropW, dropW); ventCutsMade++;
@@ -2845,6 +2886,7 @@ public class ShipLayoutGenerator : MonoBehaviour
         LastVentCutsMade     = ventCutsMade;
         LastTerminalsCapped  = terminalsCapped;
         LastActualSeed       = actualSeed;
+        LastVentRoomOverlaps = ventRoomOverlaps;
         // Scale-aware stats
         LastTargetRoomCount  = targetRoomCount;
         LastDeadEndCount     = terminalsCapped; // corridors capped = dead ends without terminal rooms
