@@ -40,6 +40,7 @@ public class ShipLayoutGenerator : MonoBehaviour
     [System.NonSerialized] public int LastLShapeCount;
     [System.NonSerialized] public int LastStraightCount;
     [System.NonSerialized] public int LastBranchCount;
+    [System.NonSerialized] public int LastSpineCount;
     [System.NonSerialized] public int LastVentCutsMade;
     [System.NonSerialized] public int LastTerminalsCapped;
     [System.NonSerialized] public int LastActualSeed;
@@ -1250,7 +1251,7 @@ public class ShipLayoutGenerator : MonoBehaviour
                        : roomBudget <= 8  ? 2
                        : roomBudget <= 14 ? rng.Next(2, 4)    // 2–3
                        : roomBudget <= 22 ? rng.Next(2, 5)    // 2–4
-                       : rng.Next(2, 6);                      // 2–5
+                       : rng.Next(2, Mathf.Min(2 + roomBudget / 4, 10) + 1); // scales up to 2–11
         // cargoAfterIdx: insert cargo after corridor [cargoAfterIdx-1].
         // Using spineCount (exclusive upper) ensures at least one corridor
         // always follows the CargoBay before Engineering.
@@ -1258,8 +1259,8 @@ public class ShipLayoutGenerator : MonoBehaviour
         // ── Corridor lengths from trainedParams ranges ────────────────────────
         float sLenMin = (trainedParams != null) ? trainedParams.spineLenRange.x : 6f;
         float sLenMax = (trainedParams != null) ? trainedParams.spineLenRange.y : 14f;
-        // Cap lengths at small budgets so early-training maps stay compact.
-        if (lvl > 0 && roomBudget <= 8) { sLenMin = Mathf.Min(sLenMin, 4f); sLenMax = Mathf.Min(sLenMax, 8f); }
+        // Cap lengths only at very small budgets so early-training maps stay compact.
+        if (lvl > 0 && roomBudget <= 5) { sLenMin = Mathf.Min(sLenMin, 4f); sLenMax = Mathf.Min(sLenMax, 8f); }
         float[] sLen = new float[spineCount];
         for (int i = 0; i < spineCount; i++)
             sLen[i] = RngRange(rng, sLenMin, sLenMax);
@@ -1292,7 +1293,7 @@ public class ShipLayoutGenerator : MonoBehaviour
         int maxBranchesForBudget = roomBudget <= 0  ? 3
                                  : roomBudget <= 8  ? 1
                                  : roomBudget <= 14 ? 2
-                                 : 3;
+                                 : Mathf.Clamp(roomBudget / 5, 2, tp_maxBranchDepth);
         int branchUpperBound = Mathf.Clamp(maxBranchesForBudget, 1, tp_maxBranchDepth);
         // branchChance gates whether we pick 1 branch (low) or up to the cap (high).
         // At branchChance=0 always 1; at 1.0 always branchUpperBound.
@@ -2883,6 +2884,7 @@ public class ShipLayoutGenerator : MonoBehaviour
         LastLShapeCount      = finalLCount;
         LastStraightCount    = finalSCount;
         LastBranchCount      = branchCount;
+        LastSpineCount       = spineCount;
         LastVentCutsMade     = ventCutsMade;
         LastTerminalsCapped  = terminalsCapped;
         LastActualSeed       = actualSeed;

@@ -57,7 +57,7 @@ public class ShipLayoutTrainer : MonoBehaviour
     // ── Genome encoding ────────────────────────────────────────────────────
     // Each genome is a float[] of length GENOME_LEN.
     // Values are in [0,1] and are decoded into the actual parameter ranges at evaluation time.
-    private const int GENOME_LEN = 36;
+    private const int GENOME_LEN = 38;
 
     // Genome indices (keep in sync with Decode / Encode helpers below)
     // ── Original 22 ─────────────────────────────────────────────
@@ -75,20 +75,22 @@ public class ShipLayoutTrainer : MonoBehaviour
     private const int G_ZSHAPE_BIAS  = 20;
     private const int G_BR_SIDE_BIAS = 21;
     // ── New structural parameters (indices 22-35) ────────────────
-    private const int G_BASE_BUDGET     = 22; // baseRoomBudget   [3..10]
-    private const int G_BUDGET_PER_LVL  = 23; // roomBudgetPerLevel [0.05..0.50]
+    private const int G_BASE_BUDGET     = 22; // baseRoomBudget   [3..20]
+    private const int G_BUDGET_PER_LVL  = 23; // roomBudgetPerLevel [0.05..1.50]
     private const int G_W_CORRIDOR      = 24; // weightCorridor   [0..2]
     private const int G_W_HUB           = 25; // weightHub        [0..2]
     private const int G_W_UTILITY       = 26; // weightUtility    [0..2]
     private const int G_W_TERMINAL      = 27; // weightTerminal   [0..2]
     private const int G_BRANCH_CHANCE   = 28; // branchChance     [0..1]
-    private const int G_MAX_BRANCH      = 29; // maxBranchDepth   [1..5]
+    private const int G_MAX_BRANCH      = 29; // maxBranchDepth   [1..8]
     private const int G_SIDE_ROOM_CH    = 30; // sideRoomChance   [0..1]
     private const int G_DOUBLE_SIDE_CH  = 31; // doubleSideChance [0..1]
     private const int G_EXTRA_ENG       = 32; // extraEngChance   [0..1]
     private const int G_EXTRA_CARGO     = 33; // extraCargoChance [0..1]
     private const int G_LOOP_CHANCE     = 34; // loopChance       [0..1]
     private const int G_LSHAPE_BIAS     = 35; // lShapeBias       [0..1]
+    private const int G_SPINE_LEN_MIN   = 36; // spineLenRange.x  [4..35]
+    private const int G_SPINE_LEN_MAX   = 37; // spineLenRange.y  [4..35]
 
     // ══════════════════════════════════════════════════════════════════════
     //  ContextMenu entry points
@@ -325,31 +327,33 @@ public class ShipLayoutTrainer : MonoBehaviour
         g[G_ENG_D_MAX]    = Norm(p.engDRange.y,           7f, 14f);
         g[G_ENG_H_MIN]    = Norm(p.engHRange.x,           3f,  6f);
         g[G_ENG_H_MAX]    = Norm(p.engHRange.y,           3f,  6f);
-        g[G_STR_MIN]      = Norm(p.zStrLenRange.x,        3f, 10f);
-        g[G_STR_MAX]      = Norm(p.zStrLenRange.y,        3f, 10f);
-        g[G_SIDE_MIN]     = Norm(p.zSideLenRange.x,       3f, 15f);
-        g[G_SIDE_MAX]     = Norm(p.zSideLenRange.y,       3f, 15f);
-        g[G_FIN_MIN]      = Norm(p.zFinLenRange.x,        3f, 14f);
-        g[G_FIN_MAX]      = Norm(p.zFinLenRange.y,        3f, 14f);
+        g[G_STR_MIN]      = Norm(p.zStrLenRange.x,        3f, 20f);
+        g[G_STR_MAX]      = Norm(p.zStrLenRange.y,        3f, 20f);
+        g[G_SIDE_MIN]     = Norm(p.zSideLenRange.x,       3f, 28f);
+        g[G_SIDE_MAX]     = Norm(p.zSideLenRange.y,       3f, 28f);
+        g[G_FIN_MIN]      = Norm(p.zFinLenRange.x,        3f, 24f);
+        g[G_FIN_MAX]      = Norm(p.zFinLenRange.y,        3f, 24f);
         g[G_SPINE_BIAS]   = p.spineRoomBias;
         g[G_ENG_BIAS]     = p.engSideRoomBias;
         g[G_ZSHAPE_BIAS]  = p.zShapeBias;
         g[G_BR_SIDE_BIAS] = p.branchSideRoomBias;
         // ── New structural parameters ──────────────────────────────
-        g[G_BASE_BUDGET]    = Norm(p.baseRoomBudget,       3f, 10f);
-        g[G_BUDGET_PER_LVL] = Norm(p.roomBudgetPerLevel,  0.05f, 0.50f);
+        g[G_BASE_BUDGET]    = Norm(p.baseRoomBudget,       3f, 20f);
+        g[G_BUDGET_PER_LVL] = Norm(p.roomBudgetPerLevel,  0.05f, 1.50f);
         g[G_W_CORRIDOR]     = Norm(p.weightCorridor,       0f,  2f);
         g[G_W_HUB]          = Norm(p.weightHub,            0f,  2f);
         g[G_W_UTILITY]      = Norm(p.weightUtility,        0f,  2f);
         g[G_W_TERMINAL]     = Norm(p.weightTerminal,       0f,  2f);
         g[G_BRANCH_CHANCE]  = p.branchChance;
-        g[G_MAX_BRANCH]     = Norm(p.maxBranchDepth,       1f,  5f);
+        g[G_MAX_BRANCH]     = Norm(p.maxBranchDepth,       1f,  8f);
         g[G_SIDE_ROOM_CH]   = p.sideRoomChance;
         g[G_DOUBLE_SIDE_CH] = p.doubleSideChance;
         g[G_EXTRA_ENG]      = p.extraEngChance;
         g[G_EXTRA_CARGO]    = p.extraCargoChance;
         g[G_LOOP_CHANCE]    = p.loopChance;
         g[G_LSHAPE_BIAS]    = p.lShapeBias;
+        g[G_SPINE_LEN_MIN]  = Norm(p.spineLenRange.x,     4f, 35f);
+        g[G_SPINE_LEN_MAX]  = Norm(p.spineLenRange.y,     4f, 35f);
         return g;
     }
 
@@ -364,28 +368,29 @@ public class ShipLayoutTrainer : MonoBehaviour
         p.engWRange           = new Vector2(Denorm(g[G_ENG_W_MIN],  8f, 16f), Denorm(g[G_ENG_W_MAX],  8f, 16f));
         p.engDRange           = new Vector2(Denorm(g[G_ENG_D_MIN],  7f, 14f), Denorm(g[G_ENG_D_MAX],  7f, 14f));
         p.engHRange           = new Vector2(Denorm(g[G_ENG_H_MIN],  3f,  6f), Denorm(g[G_ENG_H_MAX],  3f,  6f));
-        p.zStrLenRange        = new Vector2(Denorm(g[G_STR_MIN],    3f, 10f), Denorm(g[G_STR_MAX],    3f, 10f));
-        p.zSideLenRange       = new Vector2(Denorm(g[G_SIDE_MIN],   3f, 15f), Denorm(g[G_SIDE_MAX],   3f, 15f));
-        p.zFinLenRange        = new Vector2(Denorm(g[G_FIN_MIN],    3f, 14f), Denorm(g[G_FIN_MAX],    3f, 14f));
+        p.zStrLenRange        = new Vector2(Denorm(g[G_STR_MIN],    3f, 20f), Denorm(g[G_STR_MAX],    3f, 20f));
+        p.zSideLenRange       = new Vector2(Denorm(g[G_SIDE_MIN],   3f, 28f), Denorm(g[G_SIDE_MAX],   3f, 28f));
+        p.zFinLenRange        = new Vector2(Denorm(g[G_FIN_MIN],    3f, 24f), Denorm(g[G_FIN_MAX],    3f, 24f));
         p.spineRoomBias       = Mathf.Clamp01(g[G_SPINE_BIAS]);
         p.engSideRoomBias     = Mathf.Clamp01(g[G_ENG_BIAS]);
         p.zShapeBias          = Mathf.Clamp01(g[G_ZSHAPE_BIAS]);
         p.branchSideRoomBias  = Mathf.Clamp01(g[G_BR_SIDE_BIAS]);
         // ── New structural parameters ──────────────────────────────
-        p.baseRoomBudget    = Mathf.RoundToInt(Denorm(g[G_BASE_BUDGET],    3f, 10f));
-        p.roomBudgetPerLevel= Denorm(g[G_BUDGET_PER_LVL], 0.05f, 0.50f);
+        p.baseRoomBudget    = Mathf.RoundToInt(Denorm(g[G_BASE_BUDGET],    3f, 20f));
+        p.roomBudgetPerLevel= Denorm(g[G_BUDGET_PER_LVL], 0.05f, 1.50f);
         p.weightCorridor    = Denorm(g[G_W_CORRIDOR], 0f, 2f);
         p.weightHub         = Denorm(g[G_W_HUB],      0f, 2f);
         p.weightUtility     = Denorm(g[G_W_UTILITY],  0f, 2f);
         p.weightTerminal    = Denorm(g[G_W_TERMINAL], 0f, 2f);
         p.branchChance      = Mathf.Clamp01(g[G_BRANCH_CHANCE]);
-        p.maxBranchDepth    = Mathf.Clamp(Mathf.RoundToInt(Denorm(g[G_MAX_BRANCH], 1f, 5f)), 1, 5);
+        p.maxBranchDepth    = Mathf.Clamp(Mathf.RoundToInt(Denorm(g[G_MAX_BRANCH], 1f, 8f)), 1, 8);
         p.sideRoomChance    = Mathf.Clamp01(g[G_SIDE_ROOM_CH]);
         p.doubleSideChance  = Mathf.Clamp01(g[G_DOUBLE_SIDE_CH]);
         p.extraEngChance    = Mathf.Clamp01(g[G_EXTRA_ENG]);
         p.extraCargoChance  = Mathf.Clamp01(g[G_EXTRA_CARGO]);
         p.loopChance        = Mathf.Clamp01(g[G_LOOP_CHANCE]);
         p.lShapeBias        = Mathf.Clamp01(g[G_LSHAPE_BIAS]);
+        p.spineLenRange     = new Vector2(Denorm(g[G_SPINE_LEN_MIN], 4f, 35f), Denorm(g[G_SPINE_LEN_MAX], 4f, 35f));
         // Enforce min ≤ max for all ranges
         p.corridorWidthRange  = Ordered(p.corridorWidthRange);
         p.corridorHeightRange = Ordered(p.corridorHeightRange);
@@ -396,6 +401,7 @@ public class ShipLayoutTrainer : MonoBehaviour
         p.zStrLenRange        = Ordered(p.zStrLenRange);
         p.zSideLenRange       = Ordered(p.zSideLenRange);
         p.zFinLenRange        = Ordered(p.zFinLenRange);
+        p.spineLenRange       = Ordered(p.spineLenRange);
         return p;
     }
 
@@ -442,6 +448,7 @@ public class ShipLayoutTrainer : MonoBehaviour
             _gen.trainedParams.extraCargoChance    = p.extraCargoChance;
             _gen.trainedParams.loopChance          = p.loopChance;
             _gen.trainedParams.lShapeBias          = p.lShapeBias;
+            _gen.trainedParams.spineLenRange       = p.spineLenRange;
         }
         if (_gen.trainedParams != p) DestroyImmediate(p);
     }
