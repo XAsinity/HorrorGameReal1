@@ -1194,7 +1194,9 @@ public class ShipLayoutGenerator : MonoBehaviour
         float vY    = Mathf.Max(roomHeight, corridorHeight);
         float hvW   = ventW / 2f;
         float dropW = ventW * 0.5f;
-        float dropH = ventH + wallThickness + 0.15f;
+        // Extend dropH to compensate when the vent trunk runs at corridorHeight
+        // but rooms have a lower roomHeight ceiling (only applies when corridorHeight > roomHeight).
+        float dropH = ventH + wallThickness + 0.15f + Mathf.Max(0f, vY - roomHeight);
         float dropY = vY - dropH / 2f;
 
         // World-space AABB registry: (centerX, centerZ, halfW, halfD)
@@ -2411,11 +2413,24 @@ public class ShipLayoutGenerator : MonoBehaviour
 
                     // Connect to the spine corridor: delete its side wall only if a side
                     // room has not already opened it (guard against double-deletion).
+                    // After deleting the wall, recreate it with a corridor-width opening so
+                    // the rest of the spine corridor wall remains solid.
                     float doorX = sd == +1 ? HalfCor : -HalfCor;
                     if (sd == -1 && !sHL[ci])
+                    {
                         DeleteChildWall(sCorGen[ci], "Wall_Left");
+                        // Full-width opening: the branch corridor spans the entire wall opening,
+                        // so doorW/doorH match the corridor dimensions (no top or side remnants).
+                        CutWallForDoor(sCorGen[ci], "Wall_Left", true,
+                            corridorWidth, corridorHeight, sLen[ci], 0f, corridorWidth, corridorHeight);
+                    }
                     else if (sd == +1 && !sHR[ci])
+                    {
                         DeleteChildWall(sCorGen[ci], "Wall_Right");
+                        // Full-width opening: see above.
+                        CutWallForDoor(sCorGen[ci], "Wall_Right", false,
+                            corridorWidth, corridorHeight, sLen[ci], 0f, corridorWidth, corridorHeight);
+                    }
                     AddDoorWallSide("Door_Sp" + b, doorX, spCZ, corridorWidth, corridorHeight);
                 }
 
@@ -2545,7 +2560,8 @@ public class ShipLayoutGenerator : MonoBehaviour
                     MakeBoxOnParent(transform, bs + "TermCap",
                         new Vector3(bTermX[b], corridorHeight / 2f, bTermBk[b] - wallThickness / 2f),
                         corridorWidth, corridorHeight, wallThickness);
-                    Debug.Log(string.Format("[ProcGen:AI]   Branch {0}: <color=#ffcc00>Z corridor capped</color> (no terminal room).", b));
+                    if (!scoringOnly)
+                        Debug.Log(string.Format("[ProcGen:AI]   Branch {0}: <color=#ffcc00>Z corridor capped</color> (no terminal room).", b));
                 }
             }
             else // bPat[b] == 2: L-shaped branch (straight → C1 → side → C2 → terminal, no Fin corridor)
@@ -2601,7 +2617,8 @@ public class ShipLayoutGenerator : MonoBehaviour
                     MakeBoxOnParent(transform, bs + "TermCap",
                         new Vector3(bTermX[b], corridorHeight / 2f, bTermBk[b] - wallThickness / 2f),
                         corridorWidth, corridorHeight, wallThickness);
-                    Debug.Log(string.Format("[ProcGen:AI]   Branch {0}: <color=#ffcc00>L corridor capped</color> (no terminal room).", b));
+                    if (!scoringOnly)
+                        Debug.Log(string.Format("[ProcGen:AI]   Branch {0}: <color=#ffcc00>L corridor capped</color> (no terminal room).", b));
                 }
             }
         }
