@@ -426,26 +426,20 @@ public class ShipLayoutTrainer : MonoBehaviour
         return p;
     }
 
-    /// <summary>Apply a genome to the generator (sets corridor/room dimension fields).</summary>
+    /// <summary>Apply a genome to the generator (topology-only — room/vent sizes stay fixed).</summary>
     private void ApplyGenome(float[] g)
     {
         var p = DecodeGenome(g);
-        // Apply the mid-point of each dimension range as the fixed value for the generator.
-        _gen.corridorWidth  = (p.corridorWidthRange.x  + p.corridorWidthRange.y)  / 2f;
-        _gen.corridorHeight = (p.corridorHeightRange.x + p.corridorHeightRange.y) / 2f;
-        _gen.roomHeight     = (p.roomHeightRange.x     + p.roomHeightRange.y)     / 2f;
+        // Room, corridor, and vent sizes are intentionally NOT applied from the genome.
+        // The AI only controls map topology (branch count, corridor lengths, biases, etc.).
+        // Keeping corridorWidth, corridorHeight, and roomHeight at their inspector defaults
+        // prevents vent cap sizing glitches caused by mismatched procedural dimensions.
         if (_gen.trainedParams == null)
             _gen.trainedParams = p;
         else
         {
             // Copy fields into the existing asset to avoid creating garbage every eval.
-            // ── Original dimension ranges ────────────────────────────────────
-            _gen.trainedParams.corridorWidthRange  = p.corridorWidthRange;
-            _gen.trainedParams.corridorHeightRange = p.corridorHeightRange;
-            _gen.trainedParams.roomHeightRange     = p.roomHeightRange;
-            _gen.trainedParams.engWRange           = p.engWRange;
-            _gen.trainedParams.engDRange           = p.engDRange;
-            _gen.trainedParams.engHRange           = p.engHRange;
+            // ── Topology-only: skip dimension ranges (sizes stay fixed at defaults) ──
             _gen.trainedParams.zStrLenRange        = p.zStrLenRange;
             _gen.trainedParams.zSideLenRange       = p.zSideLenRange;
             _gen.trainedParams.zFinLenRange        = p.zFinLenRange;

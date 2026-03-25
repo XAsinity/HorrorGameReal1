@@ -69,6 +69,14 @@ public static class ShipLayoutScorer
     // creative layout freedom and should be rewarded at mid/high levels.
     private const float W_SPAWN_DIVERSITY   = +6f;   // bonus when any branches spawn from spine corridor sides
 
+    // ── Branch lateral-direction diversity ───────────────────────────────────
+    // Maps should spread in BOTH left and right directions, not just straight forward.
+    // Penalise when all lateral branches go the same way (all-left or all-right);
+    // reward when the map genuinely extends in both X directions.
+    private const float W_DIRECTION_BALANCE  = +12f;  // bonus when branches go both left AND right
+    private const float W_NO_DIRECTION_MIX   = -30f;  // penalty when all lateral branches go same direction
+    private const float W_ALL_STRAIGHT_BASE  = -10f;  // base all-straight penalty (scales with level)
+
 
     /// <summary>Computes and returns a score for the most-recently generated layout.</summary>
     /// <param name="trainingLevel">Current training generation/level (0 = no level-scaled rules).</param>
@@ -93,6 +101,8 @@ public static class ShipLayoutScorer
         s.DeadEndCount      = gen.LastDeadEndCount;
         s.QualityRetries    = gen.LastQualityRetries;
         s.SideBranchCount   = gen.LastSideBranchCount;
+        s.BranchesLeft      = gen.LastBranchesLeft;
+        s.BranchesRight     = gen.LastBranchesRight;
 
         // Base score
         float score = 0f;
@@ -153,9 +163,39 @@ public static class ShipLayoutScorer
                 score += W_BRANCH_VARIETY;
         }
 
-        // Specific all-straight penalty (beyond general monotony penalty) — boring layout
+        // Specific all-straight penalty (beyond general monotony penalty) — boring layout.
+        // Scale with training level so the AI is increasingly forced to use Z/L shapes.
         if (s.BranchCount > 1 && s.ZShapeCount == 0 && s.LShapeCount == 0)
-            score -= 10f;
+        {
+            float lvlScale = trainingLevel > 0 ? (1f + trainingLevel / 50f) : 1f;
+            score += W_ALL_STRAIGHT_BASE * lvlScale;
+        }
+
+        // Branch lateral-direction diversity — penalise maps where all lateral branches
+        // go the same direction (extending the map only left or only right).
+        // This forces the AI to produce wider, more varied layouts.
+        {
+            bool hasLeft  = s.BranchesLeft  > 0;
+            bool hasRight = s.BranchesRight > 0;
+            int  lateralBranches = s.BranchesLeft + s.BranchesRight;
+            if (lateralBranches >= 2)
+            {
+                if (hasLeft && hasRight)
+                {
+                    // Reward balanced left-right spread; scale with training level.
+                    float dirBonus = W_DIRECTION_BALANCE;
+                    if (trainingLevel > 0) dirBonus *= (1f + trainingLevel / 100f);
+                    score += dirBonus;
+                }
+                else
+                {
+                    // Penalise when all lateral branches go the same direction.
+                    float dirPenalty = W_NO_DIRECTION_MIX;
+                    if (trainingLevel > 0) dirPenalty *= (1f + trainingLevel / 100f);
+                    score += dirPenalty;
+                }
+            }
+        }
 
         // Reward diverse Z and L shapes (capped at 2 each to prevent gaming)
         score += Mathf.Min(s.ZShapeCount, 2) * 3f;
@@ -310,6 +350,9 @@ public static class ShipLayoutScorer
         public int   QualityRetries; // number of AI quality/broken-layout retries performed
         // Spawn diversity
         public int   SideBranchCount;  // branches that spawned from spine corridor sides
+        // Branch lateral-direction diversity
+        public int   BranchesLeft;     // branches extending toward −X
+        public int   BranchesRight;    // branches extending toward +X
 
         public override string ToString() =>
             string.Format("Score={0:F1} rooms={1}/{2} target={3} Z={4} L={5} S={6} caps={7} diag={8}/{9}/{10} vent={11}",

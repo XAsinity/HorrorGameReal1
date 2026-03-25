@@ -57,6 +57,9 @@ public class ShipLayoutGenerator : MonoBehaviour
     [System.NonSerialized] public int LastVentRoomOverlaps;  // horizontal vent branches clipping a room AABB
     // Spawn-diversity stat — how many branches spawned from spine corridor sides
     [System.NonSerialized] public int LastSideBranchCount;  // branches that spawned from spine corridors (not engineering)
+    // Branch lateral-direction diversity — for left/right map spread scoring
+    [System.NonSerialized] public int LastBranchesLeft;     // branches extending toward −X (spine: bSpawnSide==-1; eng Z/L: bSideDir==-1; eng straight: bX<0)
+    [System.NonSerialized] public int LastBranchesRight;    // branches extending toward +X (spine: bSpawnSide==+1; eng Z/L: bSideDir==+1; eng straight: bX>0)
 
     /// <summary>
     /// Set by ShipLayoutTrainer before each evaluation to scale procedural map complexity
@@ -3409,6 +3412,37 @@ public class ShipLayoutGenerator : MonoBehaviour
         if (engHL) leftRooms++; if (engHR) rightRooms++;
         LastRoomsLeftCount  = leftRooms;
         LastRoomsRightCount = rightRooms;
+
+        // Branch lateral-direction diversity stats
+        // kBranchCentre: straight branches within this distance of X=0 are truly centred
+        // (neither left nor right) so they are excluded from the lateral balance count.
+        // 0.1 m is safely below one corridor-width step so no valid off-centre branch is lost.
+        const float kBranchCentre = 0.1f;
+        int branchesLeft = 0, branchesRight = 0;
+        for (int b = 0; b < branchCount; b++)
+        {
+            if (bIsSpine[b])
+            {
+                // Spine branches run ±X — use the spawn side directly.
+                if (bSpawnSide[b] == -1) branchesLeft++;
+                else                     branchesRight++;
+            }
+            else if (bPat[b] != 0)
+            {
+                // Z/L-shaped branches — the turn direction (bSideDir) determines which
+                // X-direction the branch ultimately extends toward.
+                if (bSideDir[b] == -1) branchesLeft++;
+                else                   branchesRight++;
+            }
+            else
+            {
+                // Straight branches — use the branch X position on engineering's front wall.
+                if      (bX[b] < -kBranchCentre) branchesLeft++;
+                else if (bX[b] >  kBranchCentre) branchesRight++;
+            }
+        }
+        LastBranchesLeft  = branchesLeft;
+        LastBranchesRight = branchesRight;
 
         if (!scoringOnly)
         {
