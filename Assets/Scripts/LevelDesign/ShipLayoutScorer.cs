@@ -56,7 +56,10 @@ public static class ShipLayoutScorer
     private const float SPINE_BONUS_PER_LEVEL   = 0.05f;  // LastSpineCount  × trainingLevel × this when trainingLevel > 100
     private const float BRANCH_BONUS_PER_LEVEL  = 0.08f;  // LastBranchCount × trainingLevel × this when trainingLevel > 100
 
-    // ── Public API ────────────────────────────────────────────────────────────
+    // Spawn-diversity reward — branches from spine corridors give the AI more
+    // creative layout freedom and should be rewarded at mid/high levels.
+    private const float W_SPAWN_DIVERSITY   = +6f;   // bonus when any branches spawn from spine corridor sides
+
 
     /// <summary>Computes and returns a score for the most-recently generated layout.</summary>
     /// <param name="trainingLevel">Current training generation/level (0 = no level-scaled rules).</param>
@@ -80,6 +83,7 @@ public static class ShipLayoutScorer
         s.TargetRoomCount   = gen.LastTargetRoomCount;
         s.DeadEndCount      = gen.LastDeadEndCount;
         s.QualityRetries    = gen.LastQualityRetries;
+        s.SideBranchCount   = gen.LastSideBranchCount;
 
         // Base score
         float score = 0f;
@@ -225,6 +229,13 @@ public static class ShipLayoutScorer
         if (trainingLevel > 100 && gen.LastRoomsLeftCount > 0 && gen.LastRoomsRightCount > 0)
             score += 8f;  // extra incentive for balanced placement at high levels
 
+        // Spawn diversity — reward layouts where some branches spawn from spine corridor sides
+        // This gives the AI credit for creative exploration of the new spawn system.
+        if (trainingLevel > 50 && s.SideBranchCount > 0)
+            score += W_SPAWN_DIVERSITY;
+        if (trainingLevel > 120 && s.SideBranchCount >= 2)
+            score += W_SPAWN_DIVERSITY * 0.5f;  // extra bonus for multiple spine-side branches
+
         s.Total = score;
         return s;
     }
@@ -268,6 +279,8 @@ public static class ShipLayoutScorer
         public int   TargetRoomCount;
         public int   DeadEndCount;
         public int   QualityRetries; // number of AI quality/broken-layout retries performed
+        // Spawn diversity
+        public int   SideBranchCount;  // branches that spawned from spine corridor sides
 
         public override string ToString() =>
             string.Format("Score={0:F1} rooms={1}/{2} target={3} Z={4} L={5} S={6} caps={7} diag={8}/{9}/{10} vent={11}",

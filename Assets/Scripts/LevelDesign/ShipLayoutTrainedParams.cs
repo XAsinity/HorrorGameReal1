@@ -93,6 +93,11 @@ public class ShipLayoutTrainedParams : ScriptableObject
     [Range(0f, 1f)]
     [Tooltip("Chance an L-shape is attempted before Z-shape for branches (complement of zShapeBias).")]
     public float lShapeBias = 0.30f;
+    [Range(0f, 1f)]
+    [Tooltip("Chance that a branch spawns from the side of a spine corridor instead of engineering's front wall. " +
+             "Overflow branches (those that can't fit on engineering's front wall) always use spine-side spawning " +
+             "regardless of this value. Set >0 to give AI creative layout freedom.")]
+    public float sideSpawnBias = 0.0f;
 
     [Header("Trained Fitness")]
     [Tooltip("Average score across the evaluation seeds — set automatically by ShipLayoutTrainer.")]
