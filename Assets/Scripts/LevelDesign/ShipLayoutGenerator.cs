@@ -1258,8 +1258,8 @@ public class ShipLayoutGenerator : MonoBehaviour
         int spineMaxExcl = lvl <= 0  ? 6
                          : lvl <= 30  ? 3
                          : lvl <= 80  ? 5
-                         : lvl <= 150 ? 7
-                         : 11; // rng.Next(2,11) = 2..10 spines at level 200
+                         : lvl <= 150 ? 8
+                         : 16; // rng.Next(2,16) = 2..15 spines at level 200+
         int spineCount = rng.Next(2, spineMaxExcl);
         // cargoAfterIdx: insert cargo after corridor [cargoAfterIdx-1].
         // Using spineCount (exclusive upper) ensures at least one corridor
@@ -1269,9 +1269,9 @@ public class ShipLayoutGenerator : MonoBehaviour
         // Fallback defaults scale with level: early maps stay compact; high-level maps
         // can have much longer corridors.
         float sLenMin = (trainedParams != null) ? trainedParams.spineLenRange.x
-                      : (lvl > 0 && lvl <= 40 ? 4f : (lvl > 150 ? 12f : 6f));
+                      : (lvl > 0 && lvl <= 40 ? 4f : (lvl > 150 ? 15f : 6f));
         float sLenMax = (trainedParams != null) ? trainedParams.spineLenRange.y
-                      : (lvl > 0 && lvl <= 40 ? 8f : (lvl > 150 ? 30f : 14f));
+                      : (lvl > 0 && lvl <= 40 ? 8f : (lvl > 150 ? 60f : 16f));
         float[] sLen = new float[spineCount];
         for (int i = 0; i < spineCount; i++)
             sLen[i] = RngRange(rng, sLenMin, sLenMax);
@@ -1302,7 +1302,7 @@ public class ShipLayoutGenerator : MonoBehaviour
         // branchChance biases the roll toward more branches when high, fewer when low.
         // maxBranchDepth caps the absolute maximum; at level 151+ allow up to 8 regardless.
         // No budget cap — the scorer's size rewards teach the AI appropriate branch counts.
-        int levelBranchCap = lvl > 150 ? 8 : (lvl > 80 ? Mathf.Max(tp_maxBranchDepth, 5) : tp_maxBranchDepth);
+        int levelBranchCap = lvl > 150 ? 15 : (lvl > 80 ? Mathf.Max(tp_maxBranchDepth, 8) : tp_maxBranchDepth);
         int branchUpperBound = levelBranchCap;
         // branchChance gates whether we pick 1 branch (low) or up to the cap (high).
         // At branchChance=0 always 1; at 1.0 always branchUpperBound.
@@ -2112,13 +2112,46 @@ public class ShipLayoutGenerator : MonoBehaviour
 
         for (int b = 0; b < branchCount; b++)
         {
-            // Spine-side branches are sealed straight corridors — no terminal room.
+            // Spine-side branches: try to place a terminal room at the far end of the
+            // ±X corridor.  If no room fits, fall back to sealing the end with a cap wall.
             if (bIsSpine[b])
             {
-                bTermExists[b] = false;
-                bTermNm[b]     = "(spine-cap)";
-                if (!scoringOnly)
-                    Debug.Log(string.Format("[ProcGen:AI]   Branch {0}: spine-side — no terminal room (corridor capped at far end).", b));
+                int   sd   = bSpawnSide[b];
+                float spCZ = sCZ[bSpawnCorIdx[b]];
+                int   k    = pidx[pp++ % poolSize];  // always consume one pool slot (consistent with non-spine logic)
+                float tW   = pRW[k];  // room X-extent (width along spine branch direction)
+                float tD   = pRD[k];  // room Z-extent
+                float[] termMults = { 1.0f, 0.85f, 0.70f };
+                bool    termFit   = false;
+                int termParentCorBdsIdx = bStrCorBdsIdx[b];
+                for (int mi = 0; mi < termMults.Length && !termFit; mi++)
+                {
+                    float rW  = Mathf.Max(4f, tW * termMults[mi]);
+                    float rD  = Mathf.Max(3f, tD * termMults[mi]);
+                    float rCX = sd * (HalfCor + bStrLen[b] + rW / 2f);
+                    if (ProcTryRegister(bds, rCX, spCZ, rW / 2f, rD / 2f, kPad, termParentCorBdsIdx))
+                    {
+                        bTermExists[b] = true;
+                        bTermW[b]  = rW; bTermD[b]  = rD;
+                        bTermX[b]  = rCX;
+                        bTermCZ[b] = spCZ;
+                        bTermNm[b] = pName[k];
+                        roomsPlaced++;
+                        termFit = true;
+                    }
+                }
+                if (!termFit)
+                {
+                    bTermExists[b] = false;
+                    bTermNm[b]     = "(spine-cap)";
+                    if (!scoringOnly)
+                        Debug.Log(string.Format("[ProcGen:AI]   Branch {0}: spine-side — no terminal room fit, corridor capped.", b));
+                }
+                else if (!scoringOnly)
+                {
+                    Debug.Log(string.Format("[ProcGen:AI]   Branch {0}: spine-side terminal '{1}' placed at X={2:F1} Z={3:F1} (w={4:F1} d={5:F1}).",
+                        b, bTermNm[b], bTermX[b], bTermCZ[b], bTermW[b], bTermD[b]));
+                }
                 continue;
             }
 
@@ -2363,32 +2396,58 @@ public class ShipLayoutGenerator : MonoBehaviour
                 float spCX    = bX[b];           // center X of the branch corridor
                 float spCZ    = sCZ[ci];         // center Z (= spine corridor center)
 
+                ShipModuleGenerator spSG = null;
                 if (!scoringOnly)
                 {
                     GameObject spGO = new GameObject(bs + "Str");
                     spGO.transform.SetParent(transform);
                     spGO.transform.localPosition = new Vector3(spCX, 0f, spCZ);
                     spGO.transform.localRotation = Quaternion.Euler(0, 90, 0);
-                    ShipModuleGenerator spSG = spGO.AddComponent<ShipModuleGenerator>();
+                    spSG = spGO.AddComponent<ShipModuleGenerator>();
                     spSG.moduleType = ShipModuleGenerator.ModuleType.Corridor;
                     spSG.width = corridorWidth; spSG.height = corridorHeight; spSG.depth = bStrLen[b];
                     spSG.wallThickness = wallThickness; spSG.detailLevel = detailLevel;
                     spSG.overrideMaterial = prototypeMaterial; spSG.Generate();
 
-                    // Connect to the spine corridor: delete its side wall, add door wall
+                    // Connect to the spine corridor: delete its side wall only if a side
+                    // room has not already opened it (guard against double-deletion).
                     float doorX = sd == +1 ? HalfCor : -HalfCor;
-                    if (sd == -1)
+                    if (sd == -1 && !sHL[ci])
                         DeleteChildWall(sCorGen[ci], "Wall_Left");
-                    else
+                    else if (sd == +1 && !sHR[ci])
                         DeleteChildWall(sCorGen[ci], "Wall_Right");
                     AddDoorWallSide("Door_Sp" + b, doorX, spCZ, corridorWidth, corridorHeight);
                 }
 
-                // Seal the far end of the spine branch corridor with a wall cap
                 float spEndX = sd * (HalfCor + bStrLen[b]);
-                MakeBoxOnParent(transform, bs + "TermCap",
-                    new Vector3(spEndX - sd * wallThickness / 2f, corridorHeight / 2f, spCZ),
-                    corridorHeight, corridorWidth, wallThickness);
+
+                if (bTermExists[b])
+                {
+                    // Open the corridor's far-end wall so it connects to the terminal room.
+                    // After 90° Y-rotation: local +Z = world +X (sd=+1 → Wall_Front is far end;
+                    // sd=-1 → local +Z still = world +X, so Wall_Front is toward the spine and
+                    // Wall_Back is the far end).
+                    if (!scoringOnly)
+                        DeleteChildWall(spSG, sd == +1 ? "Wall_Front" : "Wall_Back");
+
+                    termGen[b] = AddRoom(bTermNm[b], bTermX[b], bTermCZ[b], bTermW[b], roomHeight, bTermD[b]);
+                    // Delete the room's connecting wall (the face toward the corridor end)
+                    if (sd == +1)
+                        DeleteChildWall(termGen[b], "Wall_Left");   // left wall faces −X = toward corridor
+                    else
+                        DeleteChildWall(termGen[b], "Wall_Right");  // right wall faces +X = toward corridor
+                    // Door wall at the junction: spans room's Z depth, faces along X
+                    AddDoorWallSide("Door_" + bTermNm[b] + "_SpT" + b,
+                        spEndX + sd * wallThickness / 2f, bTermCZ[b], bTermD[b], roomHeight);
+                }
+                else
+                {
+                    // Seal the far end of the spine branch corridor with a correctly oriented
+                    // cap wall: thin along X (wallThickness), full height, full corridor Z width.
+                    MakeBoxOnParent(transform, bs + "TermCap",
+                        new Vector3(spEndX - sd * wallThickness / 2f, corridorHeight / 2f, spCZ),
+                        wallThickness, corridorHeight, corridorWidth);
+                }
                 continue;
             }
 
