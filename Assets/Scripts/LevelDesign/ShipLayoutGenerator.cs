@@ -55,6 +55,8 @@ public class ShipLayoutGenerator : MonoBehaviour
     [System.NonSerialized] public int LastDeadEndCount;      // corridors capped without a terminal room
     // Vent-room geometry overlap stat
     [System.NonSerialized] public int LastVentRoomOverlaps;  // horizontal vent branches clipping a room AABB
+    // Spawn-diversity stat — how many branches spawned from spine corridor sides
+    [System.NonSerialized] public int LastSideBranchCount;  // branches that spawned from spine corridors (not engineering)
 
     /// <summary>
     /// Set by ShipLayoutTrainer before each evaluation to scale procedural map complexity
@@ -1212,6 +1214,8 @@ public class ShipLayoutGenerator : MonoBehaviour
         float tp_sideRoomChance    = trainedParams != null ? trainedParams.sideRoomChance    : 0.60f;
         float tp_doubleSideChance  = trainedParams != null ? trainedParams.doubleSideChance  : 0.40f;
 
+        float tp_sideSpawnBias     = trainedParams != null ? trainedParams.sideSpawnBias      : 0.0f;
+
         // Z-shape / L-shape / straight cumulative thresholds for the pattern roll:
         //   [0, zBias)          → Z-shape (1)
         //   [zBias, zBias+lBias)→ L-shape (2)
@@ -1316,33 +1320,135 @@ public class ShipLayoutGenerator : MonoBehaviour
         float[] bFinCZ   = new float[branchCount];
         float[] bTermBk  = new float[branchCount];
         float[] bTermX   = new float[branchCount];
+        // Spawn-point arrays: which branches originate from spine corridor sides
+        // rather than from engineering's front wall.
+        bool[] bIsSpine    = new bool[branchCount];  // true = spawns from a spine corridor side
+        int[]  bSpawnCorIdx = new int[branchCount];  // spine corridor index (bIsSpine only)
+        int[]  bSpawnSide   = new int[branchCount];  // +1 = right (+X dir), -1 = left (-X dir)
+        // Track which spine corridor sides are reserved for branch spawns
+        // (those sides cannot also have regular side rooms placed on them).
+        bool[] spineLeftTaken  = new bool[spineCount];
+        bool[] spineRightTaken = new bool[spineCount];
 
-        if (branchCount == 1)
+        // ── Assign spawn points: Engineering vs. spine-corridor side ────────────
+        // Engineering front wall can only accommodate branches within [-engW/2+HalfCor, +engW/2-HalfCor].
+        // Branches that exceed this range MUST spawn from spine corridor sides.
+        // Additionally, tp_sideSpawnBias randomly promotes some fitting branches to spine-side.
+        const float kBranchSepMultiplier = 2.5f;
+        float minSepEng    = corridorWidth * kBranchSepMultiplier;
+        float maxBranchEngX = engW / 2f - HalfCor;  // max |X| for an engineering opening
+        // Max branches that can fit on engineering front wall without going outside engW
+        int maxEngFit = (maxBranchEngX >= corridorWidth) ?
+            Mathf.Max(1, Mathf.FloorToInt(maxBranchEngX * 2f / minSepEng) + 1) : 1;
+
+        // Determine target count of spine-side branches:
+        //   overflow (branches that can't fit on engineering) + bias-driven promotions
+        int nOverflow    = Mathf.Max(0, branchCount - maxEngFit);
+        int nSpineTarget = nOverflow;
+        if (tp_sideSpawnBias > 0f)
+        {
+            // Randomly promote some engineering-eligible branches to spine-side
+            for (int b = 0; b < branchCount - nOverflow; b++)
+                if (rng.NextDouble() < tp_sideSpawnBias) nSpineTarget++;
+        }
+        // Cap spine targets to available spine side slots
+        int spineSideSlots = spineCount * 2;
+        nSpineTarget = Mathf.Min(nSpineTarget, spineSideSlots);
+
+        // Shuffle branch indices to randomise which branches become spine-spawning
+        int[] branchShuffled = new int[branchCount];
+        for (int b = 0; b < branchCount; b++) branchShuffled[b] = b;
+        for (int i = branchCount - 1; i > 0; i--)
+        {
+            int j = rng.Next(i + 1);
+            int tmp = branchShuffled[i]; branchShuffled[i] = branchShuffled[j]; branchShuffled[j] = tmp;
+        }
+
+        // Assign the first nSpineTarget shuffled branches to spine corridors
+        {
+            int spineAssigned = 0;
+            for (int si = 0; si < branchCount && spineAssigned < nSpineTarget; si++)
+            {
+                int b = branchShuffled[si];
+                // Try corridors in order; prefer ones not yet used on either side
+                for (int ci = 0; ci < spineCount && !bIsSpine[b]; ci++)
+                {
+                    // Random which side to try first
+                    int first = rng.Next(2) == 0 ? -1 : +1;
+                    int[] sides = { first, -first };
+                    foreach (int side in sides)
+                    {
+                        bool leftFree  = side == -1 && !spineLeftTaken[ci];
+                        bool rightFree = side == +1 && !spineRightTaken[ci];
+                        if (leftFree || rightFree)
+                        {
+                            bIsSpine[b]    = true;
+                            bSpawnCorIdx[b]= ci;
+                            bSpawnSide[b]  = side;
+                            if (side == -1) spineLeftTaken[ci]  = true;
+                            else            spineRightTaken[ci] = true;
+                            spineAssigned++;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        // ── Distribute bX[] for engineering-spawned branches within engW ────────
+        // Build list of engineering branch indices (those not assigned to spine)
+        var engBranchList = new System.Collections.Generic.List<int>();
+        for (int b = 0; b < branchCount; b++) if (!bIsSpine[b]) engBranchList.Add(b);
+        int nEng = engBranchList.Count;
+
+        if (nEng == 1)
         {
             int ch = rng.Next(3);
-            bX[0] = ch == 0 ? -(engW / 4f) : (ch == 2 ? engW / 4f : 0f);
+            bX[engBranchList[0]] = ch == 0 ? -(maxBranchEngX / 2f)
+                                 : ch == 2 ?  (maxBranchEngX / 2f)
+                                 : 0f;
         }
-        else if (branchCount == 2)
-        { bX[0] = -(engW / 4f); bX[1] = engW / 4f; }
-        else if (branchCount == 3)
-        { bX[0] = -(engW / 3f); bX[1] = 0f; bX[2] = engW / 3f; }
-        else
+        else if (nEng == 2)
         {
-            // 4+ branches: distribute evenly with minimum corridorWidth*2.5 separation
-            // so each branch has enough room to extend laterally without immediately
-            // overlapping its neighbours.
-            const float kBranchSepMultiplier = 2.5f; // minimum separation factor × corridorWidth
-            float minSep  = corridorWidth * kBranchSepMultiplier;
-            float step    = Mathf.Max(engW * 0.8f / (branchCount - 1), minSep);
-            float halfSpan = step * (branchCount - 1) * 0.5f;
-            for (int b = 0; b < branchCount; b++)
-                bX[b] = -halfSpan + b * step;
+            bX[engBranchList[0]] = -(maxBranchEngX * 0.6f);
+            bX[engBranchList[1]] =  (maxBranchEngX * 0.6f);
         }
+        else if (nEng == 3)
+        {
+            bX[engBranchList[0]] = -(maxBranchEngX * 0.8f);
+            bX[engBranchList[1]] =  0f;
+            bX[engBranchList[2]] =  (maxBranchEngX * 0.8f);
+        }
+        else if (nEng > 3)
+        {
+            // Evenly distribute within the available engineering span, but never exceed engW/2
+            float engSpan = Mathf.Min(maxBranchEngX * 2f * 0.9f, maxBranchEngX * 2f);
+            float engStep = engSpan / (nEng - 1);
+            engStep = Mathf.Max(engStep, corridorWidth * 2f);  // enforce minimum gap
+            // If step forces span outside engW, clamp to engW
+            float halfSpanEng = engStep * (nEng - 1) * 0.5f;
+            if (halfSpanEng > maxBranchEngX)
+            {
+                engStep    = maxBranchEngX * 2f / (nEng - 1);
+                halfSpanEng = maxBranchEngX;
+            }
+            for (int bi = 0; bi < nEng; bi++)
+                bX[engBranchList[bi]] = -halfSpanEng + bi * engStep;
+        }
+
+        // Set placeholder bX for spine branches (will be recalculated with real bStrLen in the loop below).
+        // Use 0 as placeholder; the actual X center = bSpawnSide * (HalfCor + bStrLen/2).
+        for (int b = 0; b < branchCount; b++)
+            if (bIsSpine[b]) bX[b] = 0f;
+
         if (!scoringOnly)
-            Debug.Log(string.Format("[ProcGen:AI] Topology: spine={0} corridors | cargo after cor{1} | eng={2:F1}×{3:F1}×{4:F1}h | branches={5} at X=[{6}]",
+        {
+            int nSpineActual = 0;
+            for (int b = 0; b < branchCount; b++) if (bIsSpine[b]) nSpineActual++;
+            Debug.Log(string.Format("[ProcGen:AI] Topology: spine={0} corridors | cargo after cor{1} | eng={2:F1}×{3:F1}×{4:F1}h | branches={5} ({6} eng-front, {7} spine-side)",
                 spineCount, cargoAfterIdx,
-                engW, engD, engH, branchCount,
-                string.Join(", ", System.Array.ConvertAll(bX, x => x.ToString("F1")))));
+                engW, engD, engH, branchCount, nEng, nSpineActual));
+        }
 
         // Incremental branch-corridor AABB registry used only during Phase 1 geometry
         // planning.  This list is SEPARATE from the main 'bds' list to avoid false
@@ -1376,6 +1482,32 @@ public class ShipLayoutGenerator : MonoBehaviour
             bSideDir[b] = bX[b] < -0.1f ? -1
                         : bX[b] >  0.1f ? +1
                         : (rng.Next(2) == 0 ? -1 : +1);
+
+            // ── Spine-side branch: straight pattern only, running in ±X direction ──
+            // Spine branches connect to the side wall of a spine corridor, running
+            // perpendicular to the spine (along the X axis). They are always straight
+            // corridors — Z/L patterns cannot be used without the branch origin being
+            // on engineering's front wall.
+            if (bIsSpine[b])
+            {
+                bPat[b]    = 0;  // straight only
+                bSideDir[b]= bSpawnSide[b];
+                // Update bX to the real X center (origin was placeholder 0)
+                bX[b] = bSpawnSide[b] * (HalfCor + bStrLen[b] / 2f);
+                // Terminal: no room placed — corridor sealed at far end
+                bTermBk[b] = bSpawnSide[b] * (HalfCor + bStrLen[b]);
+                bTermX[b]  = bTermBk[b];
+                // Register AABB: spine branches run in X → halfX=bStrLen/2, halfZ=corridorWidth/2
+                float spBCX = bX[b];
+                float spBCZ = sCZ[bSpawnCorIdx[b]];
+                branchSegBds.Add(new Vector4(spBCX, spBCZ, bStrLen[b] / 2f, corridorWidth / 2f));
+                if (!scoringOnly)
+                    Debug.Log(string.Format(
+                        "[ProcGen:AI] Branch {0}: <b>SPINE-SIDE</b> from spine[{1}] {2} (straight, length={3:F1}m, X center={4:F1})",
+                        b, bSpawnCorIdx[b], bSpawnSide[b] == +1 ? "right(+X)" : "left(-X)",
+                        bStrLen[b], bX[b]));
+                continue;
+            }
 
             // Encourage branch direction diversity — if consecutive branches initially
             // point the same way, flip with 70 % probability so the layout varies.
@@ -1751,6 +1883,18 @@ public class ShipLayoutGenerator : MonoBehaviour
         int[] bStrCorBdsIdx = new int[branchCount];
         for (int b = 0; b < branchCount; b++)
         {
+            if (bIsSpine[b])
+            {
+                // Spine branches run in ±X direction.  Register AABB with X and Z
+                // half-sizes swapped compared to engineering branches.
+                // Center = (bX[b], sCZ[spawnCorIdx]) where bX[b] = ±(HalfCor + bStrLen/2).
+                bStrCorBdsIdx[b] = bds.Count;
+                bFinCorBdsIdx[b] = bds.Count;  // same slot (no Fin corridor)
+                float spBCZ = sCZ[bSpawnCorIdx[b]];
+                bds.Add(new Vector4(bX[b], spBCZ, bStrLen[b] / 2f, corridorWidth / 2f));
+                continue;  // no Z/L segments to register
+            }
+
             float strCZ = engFr + bStrLen[b] / 2f;
             bStrCorBdsIdx[b] = bds.Count;
             bds.Add(new Vector4(bX[b], strCZ, corridorWidth / 2f, bStrLen[b] / 2f));
@@ -1793,22 +1937,55 @@ public class ShipLayoutGenerator : MonoBehaviour
             int spineCorBdsIdx = 3 + i;
 
             // First side candidate — use tp_sideRoomChance (replaces hardcoded 0.75)
-            if (rng.NextDouble() < tp_sideRoomChance)
+            // Skip sides reserved for spine-side branches.
+            bool leftReserved  = spineLeftTaken[i];
+            bool rightReserved = spineRightTaken[i];
+            if (rng.NextDouble() < tp_sideRoomChance && !(leftReserved && rightReserved))
             {
                 int k = pidx[pp % poolSize];
-                float fcx, fw, fd; bool fLeft;
-                if (ProcTryPlaceRoom(bds, sCZ[i], pRW[k], pRD[k], true, kPad,
-                        out fcx, out fw, out fd, out fLeft, spineCorBdsIdx))
+                bool placed1 = false;
+                // If one side is reserved, directly try the free side; otherwise try both.
+                if (!leftReserved && !rightReserved)
+                {
+                    float fcx, fw, fd; bool fLeft;
+                    if (ProcTryPlaceRoom(bds, sCZ[i], pRW[k], pRD[k], true, kPad,
+                            out fcx, out fw, out fd, out fLeft, spineCorBdsIdx))
+                    {
+                        if (fLeft)
+                        { sHL[i] = true; sLNm[i] = pName[k]; sLW[i] = fw; sLD[i] = fd; sLX[i] = fcx; }
+                        else
+                        { sHR[i] = true; sRNm[i] = pName[k]; sRW[i] = fw; sRD[i] = fd; sRX[i] = fcx; }
+                        placed1 = true;
+                    }
+                }
+                else
+                {
+                    // Only one side free — try that side with 3 size attempts
+                    int forcedSide = leftReserved ? +1 : -1;
+                    float[] mults1 = { 1.0f, 0.8f, 0.65f };
+                    for (int mi1 = 0; mi1 < mults1.Length && !placed1; mi1++)
+                    {
+                        float rW1 = Mathf.Max(3f, pRW[k] * mults1[mi1]);
+                        float rD1 = Mathf.Max(3f, pRD[k] * mults1[mi1]);
+                        float cx1 = forcedSide * (HalfCor + rW1 / 2f);
+                        if (ProcTryRegister(bds, cx1, sCZ[i], rW1 / 2f, rD1 / 2f, kPad, spineCorBdsIdx))
+                        {
+                            if (forcedSide == -1)
+                            { sHL[i] = true; sLNm[i] = pName[k]; sLW[i] = rW1; sLD[i] = rD1; sLX[i] = cx1; }
+                            else
+                            { sHR[i] = true; sRNm[i] = pName[k]; sRW[i] = rW1; sRD[i] = rD1; sRX[i] = cx1; }
+                            placed1 = true;
+                        }
+                    }
+                }
+                if (placed1)
                 {
                     pp++;
-                    if (fLeft)
-                    { sHL[i] = true; sLNm[i] = pName[k]; sLW[i] = fw; sLD[i] = fd; sLX[i] = fcx; }
-                    else
-                    { sHR[i] = true; sRNm[i] = pName[k]; sRW[i] = fw; sRD[i] = fd; sRX[i] = fcx; }
                     roomsPlaced++;
                     if (!scoringOnly)
                         Debug.Log(string.Format("[ProcGen:AI] Spine[{0}] placed '{1}' on {2} side (w={3:F1} d={4:F1}).",
-                            i, pName[k], fLeft ? "left" : "right", fw, fd));
+                            i, pName[k], sHL[i] ? "left" : "right",
+                            sHL[i] ? sLW[i] : sRW[i], sHL[i] ? sLD[i] : sRD[i]));
                 }
                 else
                 {
@@ -1823,14 +2000,17 @@ public class ShipLayoutGenerator : MonoBehaviour
             }
 
             // Second side candidate — use tp_doubleSideChance.
-            // Only attempt the side not yet occupied.
-            // We do NOT reuse ProcTryPlaceRoom here because that function tries
-            // both sides internally, which could collide with the first room.
-            // Instead, target exactly the free side with up to 3 size attempts.
-            if (rng.NextDouble() < tp_doubleSideChance && !(sHL[i] && sHR[i]))
+            // Only attempt the side not yet occupied AND not reserved for a branch.
+            // Determine which sides are still free for rooms.
+            bool leftFreeForRoom  = !sHL[i] && !spineLeftTaken[i];
+            bool rightFreeForRoom = !sHR[i] && !spineRightTaken[i];
+            if (rng.NextDouble() < tp_doubleSideChance && (leftFreeForRoom || rightFreeForRoom))
             {
                 int k = pidx[pp % poolSize];
-                bool needLeft  = !sHL[i];  // fill the unoccupied side
+                // Target the free side that doesn't have a room yet
+                bool needLeft  = leftFreeForRoom && (!rightFreeForRoom || rng.Next(2) == 0);
+                if (!leftFreeForRoom)  needLeft = false;
+                if (!rightFreeForRoom) needLeft = true;
                 int  side2     = needLeft ? -1 : 1;
                 float[] mults2 = { 1.0f, 0.8f, 0.65f };
                 bool placed2   = false;
@@ -1918,7 +2098,12 @@ public class ShipLayoutGenerator : MonoBehaviour
         }
 
         // ── Terminal rooms (one branch always gets Bridge) ────
-        int      bridgeBranch = rng.Next(branchCount);
+        // bridgeBranch is chosen from engineering-spawned branches only, since
+        // spine-side branches are straight corridors with no terminal room slot.
+        int[]  engBranchArr = engBranchList.ToArray();
+        int    bridgeBranch = engBranchArr.Length > 0
+            ? engBranchArr[rng.Next(engBranchArr.Length)]
+            : rng.Next(branchCount);  // fallback if all branches are spine-side
         float[]  bTermW  = new float[branchCount];
         float[]  bTermD  = new float[branchCount];
         string[] bTermNm = new string[branchCount];
@@ -1927,6 +2112,16 @@ public class ShipLayoutGenerator : MonoBehaviour
 
         for (int b = 0; b < branchCount; b++)
         {
+            // Spine-side branches are sealed straight corridors — no terminal room.
+            if (bIsSpine[b])
+            {
+                bTermExists[b] = false;
+                bTermNm[b]     = "(spine-cap)";
+                if (!scoringOnly)
+                    Debug.Log(string.Format("[ProcGen:AI]   Branch {0}: spine-side — no terminal room (corridor capped at far end).", b));
+                continue;
+            }
+
             if (b == bridgeBranch)
             { bTermW[b] = bridgeW; bTermD[b] = bridgeD; bTermNm[b] = "Bridge"; }
             else
@@ -2102,8 +2297,14 @@ public class ShipLayoutGenerator : MonoBehaviour
                 AddDoorWall("Door_Eng_Back", 0f, engBk + wallThickness / 2f, engW, engH).transform,
                 engH, dH, vY);
         DeleteChildWall(engGen, "Wall_Front");
-        // Dynamic front wall — adapts to any number of branch openings
-        BuildEngFrontWallDynamic(engW, engH, engFr, (float[])bX.Clone(), corridorWidth, dH);
+        // Dynamic front wall — adapts to engineering-spawned branches only
+        // (spine-side branches connect to spine corridor walls, not engineering's front wall)
+        {
+            var engOpenings = new System.Collections.Generic.List<float>();
+            for (int b = 0; b < branchCount; b++)
+                if (!bIsSpine[b]) engOpenings.Add(bX[b]);
+            BuildEngFrontWallDynamic(engW, engH, engFr, engOpenings.ToArray(), corridorWidth, dH);
+        }
 
         // Engineering optional side rooms
         ShipModuleGenerator engReactGen = null, engLabGen = null;
@@ -2151,6 +2352,45 @@ public class ShipLayoutGenerator : MonoBehaviour
         {
             string bs     = "B" + b + "_";
             bool   goLeft = bSideDir[b] == -1;
+
+            // ── Spine-side branch: straight corridor running in ±X direction ──
+            // The corridor is rotated 90° to run perpendicular to the spine.
+            // The spine corridor's side wall is deleted and replaced with a door wall.
+            if (bIsSpine[b])
+            {
+                int   ci      = bSpawnCorIdx[b];
+                int   sd      = bSpawnSide[b];  // +1=right(+X), -1=left(-X)
+                float spCX    = bX[b];           // center X of the branch corridor
+                float spCZ    = sCZ[ci];         // center Z (= spine corridor center)
+
+                if (!scoringOnly)
+                {
+                    GameObject spGO = new GameObject(bs + "Str");
+                    spGO.transform.SetParent(transform);
+                    spGO.transform.localPosition = new Vector3(spCX, 0f, spCZ);
+                    spGO.transform.localRotation = Quaternion.Euler(0, 90, 0);
+                    ShipModuleGenerator spSG = spGO.AddComponent<ShipModuleGenerator>();
+                    spSG.moduleType = ShipModuleGenerator.ModuleType.Corridor;
+                    spSG.width = corridorWidth; spSG.height = corridorHeight; spSG.depth = bStrLen[b];
+                    spSG.wallThickness = wallThickness; spSG.detailLevel = detailLevel;
+                    spSG.overrideMaterial = prototypeMaterial; spSG.Generate();
+
+                    // Connect to the spine corridor: delete its side wall, add door wall
+                    float doorX = sd == +1 ? HalfCor : -HalfCor;
+                    if (sd == -1)
+                        DeleteChildWall(sCorGen[ci], "Wall_Left");
+                    else
+                        DeleteChildWall(sCorGen[ci], "Wall_Right");
+                    AddDoorWallSide("Door_Sp" + b, doorX, spCZ, corridorWidth, corridorHeight);
+                }
+
+                // Seal the far end of the spine branch corridor with a wall cap
+                float spEndX = sd * (HalfCor + bStrLen[b]);
+                MakeBoxOnParent(transform, bs + "TermCap",
+                    new Vector3(spEndX - sd * wallThickness / 2f, corridorHeight / 2f, spCZ),
+                    corridorHeight, corridorWidth, wallThickness);
+                continue;
+            }
 
             if (bPat[b] == 0)
             {
@@ -2324,18 +2564,36 @@ public class ShipLayoutGenerator : MonoBehaviour
         AddVentVertical("VDrop_Dock", 0f, dropY, dockZ, dropW, dropH, dropW);
         CutCeilingForVent(dockGen, dropW, dropW); ventCutsMade++;
 
+        // Precompute: which branch index (if any) is on each spine corridor side.
+        // Used by Phase 4 to add vent runs for spine-side branches.
+        int[] spineLeftBranch  = new int[spineCount];
+        int[] spineRightBranch = new int[spineCount];
+        for (int i = 0; i < spineCount; i++) { spineLeftBranch[i] = -1; spineRightBranch[i] = -1; }
+        for (int b = 0; b < branchCount; b++)
+        {
+            if (bIsSpine[b])
+            {
+                int ci = bSpawnCorIdx[b];
+                if (bSpawnSide[b] == -1) spineLeftBranch[ci]  = b;
+                else                     spineRightBranch[ci] = b;
+            }
+        }
+
         // --- Main spine trunk (DockingBay → Engineering front) ---
         float sv = dockZ + hvW; // leading edge of the next shaft segment
 
         for (int i = 0; i < spineCount; i++)
         {
-            bool hasJ = sHL[i] || sHR[i];
+            // A vent junction at this spine corridor is needed if ANY side has a room OR a branch.
+            bool hasLeft  = sHL[i] || spineLeftTaken[i];
+            bool hasRight = sHR[i] || spineRightTaken[i];
+            bool hasJ = hasLeft || hasRight;
             if (hasJ)
             {
                 ConnectVent("VS_ToJ" + i, 0f, vY, sv, 0f, vY, sCZ[i] - hvW); ventSegs++;
-                if      (sHL[i] && sHR[i]) AddVentCross("VJ_S" + i, 0f, vY, sCZ[i]);
-                else if (sHL[i])           AddVentTee("VJ_S" + i, 0f, vY, sCZ[i], false, false, false, true);
-                else                       AddVentTee("VJ_S" + i, 0f, vY, sCZ[i], false, false, true, false);
+                if      (hasLeft && hasRight) AddVentCross("VJ_S" + i, 0f, vY, sCZ[i]);
+                else if (hasLeft)             AddVentTee("VJ_S" + i, 0f, vY, sCZ[i], false, false, false, true);
+                else                          AddVentTee("VJ_S" + i, 0f, vY, sCZ[i], false, false, true, false);
                 sv = sCZ[i] + hvW;
 
                 if (sHL[i])
@@ -2346,6 +2604,15 @@ public class ShipLayoutGenerator : MonoBehaviour
                     AddVentVertical("VDrop_SL" + i, sLX[i], dropY, sCZ[i], dropW, dropH, dropW);
                     CutCeilingForVent(sLGen[i], dropW, dropW); ventCutsMade++;
                 }
+                else if (spineLeftTaken[i])
+                {
+                    // Spine-side branch on left: vent runs in -X along the branch corridor
+                    int    bsp    = spineLeftBranch[i];
+                    float  endX   = -(HalfCor + bStrLen[bsp]);  // far end of the branch in -X
+                    ConnectVent("VB_SpBL" + i, -hvW, vY, sCZ[i], endX + hvW, vY, sCZ[i]); ventSegs++;
+                    AddVentCap("VentCap_SpB" + bsp, endX, vY, sCZ[i]);
+                }
+
                 if (sHR[i])
                 {
                     ConnectVent("VB_SR" + i, hvW, vY, sCZ[i], sRX[i] - hvW, vY, sCZ[i]); ventSegs++;
@@ -2353,6 +2620,14 @@ public class ShipLayoutGenerator : MonoBehaviour
                     AddVentElbow("VElbow_SR" + i, sRX[i], vY, sCZ[i], true, true, false, true);
                     AddVentVertical("VDrop_SR" + i, sRX[i], dropY, sCZ[i], dropW, dropH, dropW);
                     CutCeilingForVent(sRGen[i], dropW, dropW); ventCutsMade++;
+                }
+                else if (spineRightTaken[i])
+                {
+                    // Spine-side branch on right: vent runs in +X along the branch corridor
+                    int    bsp    = spineRightBranch[i];
+                    float  endX   = HalfCor + bStrLen[bsp];  // far end of the branch in +X
+                    ConnectVent("VB_SpBR" + i, hvW, vY, sCZ[i], endX - hvW, vY, sCZ[i]); ventSegs++;
+                    AddVentCap("VentCap_SpB" + bsp, endX, vY, sCZ[i]);
                 }
             }
 
@@ -2393,15 +2668,22 @@ public class ShipLayoutGenerator : MonoBehaviour
         }
 
         // --- Engineering front junction → branch lateral shafts ---
-        bool centerBranch = branchCount == 1 && Mathf.Abs(bX[0]) < 0.1f;
+        // The engineering front junction and per-branch vent shafts only apply to
+        // engineering-spawned branches.  Spine-side branches get their vent connection
+        // through the spine corridor junction (Phase 4 spine loop above).
+        bool hasAnyEngBranch = false;
+        for (int b = 0; b < branchCount; b++) if (!bIsSpine[b]) { hasAnyEngBranch = true; break; }
+
+        bool centerBranch = hasAnyEngBranch && branchCount == 1 && !bIsSpine[0] && Mathf.Abs(bX[0]) < 0.1f;
         float engFrEnd = centerBranch ? engFr + hvW : engFr - hvW;
         ConnectVent("VS_ToEngFr", 0f, vY, sv, 0f, vY, engFrEnd); ventSegs++;
 
-        if (!centerBranch)
+        if (!centerBranch && hasAnyEngBranch)
         {
             bool openL = false, openR = false, openF = false;
             for (int b = 0; b < branchCount; b++)
             {
+                if (bIsSpine[b]) continue;  // spine branches don't connect at engFr
                 if      (bX[b] < -0.1f) openL = true;
                 else if (bX[b] >  0.1f) openR = true;
                 else                    openF = true;
@@ -2415,6 +2697,7 @@ public class ShipLayoutGenerator : MonoBehaviour
 
             for (int b = 0; b < branchCount; b++)
             {
+                if (bIsSpine[b]) continue;  // spine branches handled in spine loop
                 if (Mathf.Abs(bX[b]) < 0.1f) continue;
                 if (bX[b] < 0f)
                 {
@@ -2432,6 +2715,10 @@ public class ShipLayoutGenerator : MonoBehaviour
         // --- Per-branch vent shafts ---
         for (int b = 0; b < branchCount; b++)
         {
+            // Spine-side branches already have their vent run built in the spine junction
+            // loop above.  Skip them here.
+            if (bIsSpine[b]) continue;
+
             float bvStart      = engFr + hvW;
             float termDeep     = bTermBk[b] + bTermD[b] - 1f;
             float termVentEndZ = bTermExists[b] ? bTermCZ[b] - hvW : bTermBk[b] - hvW;
@@ -2759,7 +3046,7 @@ public class ShipLayoutGenerator : MonoBehaviour
             // Vent shaft pieces — run through rooms/corridors at ceiling height by design
             if (n.StartsWith("VS_") || n.StartsWith("VB_") || n.StartsWith("VJ_") ||
                 n.StartsWith("VDrop_") || n.StartsWith("VElbow_") || n.StartsWith("VentCap_") ||
-                n.StartsWith("VR_") || n.StartsWith("VL_"))
+                n.StartsWith("VR_") || n.StartsWith("VL_") || n.StartsWith("VB_SpB"))
                 return true;
             // Doors — placed at the boundary between two modules
             if (n.StartsWith("Door_"))
@@ -2954,7 +3241,10 @@ public class ShipLayoutGenerator : MonoBehaviour
         {
             int   curFinalZCount = 0, curFinalLCount = 0;
             for (int b = 0; b < branchCount; b++)
-            { if (bPat[b] == 1) curFinalZCount++; else if (bPat[b] == 2) curFinalLCount++; }
+            {
+                if (bIsSpine[b]) continue;  // spine branches don't count toward Z/L quality
+                if (bPat[b] == 1) curFinalZCount++; else if (bPat[b] == 2) curFinalLCount++;
+            }
             float qualityScore = roomsPlaced * 2f - roomsSkipped * 3f
                                - overlapCount * 10f - corridorOverlaps * 8f
                                + branchCount * 3f
@@ -3003,9 +3293,10 @@ public class ShipLayoutGenerator : MonoBehaviour
         _procRetries = 0;
 
         // Tally branch patterns for stats and summary
-        int finalZCount = 0, finalLCount = 0, finalSCount = 0, terminalsCapped = 0;
+        int finalZCount = 0, finalLCount = 0, finalSCount = 0, terminalsCapped = 0, finalSpineCount = 0;
         for (int b = 0; b < branchCount; b++)
         {
+            if (bIsSpine[b]) { finalSpineCount++; terminalsCapped++; continue; }  // spine branches always capped
             if (bPat[b] == 1) finalZCount++;
             else if (bPat[b] == 2) finalLCount++;
             else finalSCount++;
@@ -3028,6 +3319,7 @@ public class ShipLayoutGenerator : MonoBehaviour
         LastActualSeed       = actualSeed;
         LastVentRoomOverlaps = ventRoomOverlaps;
         LastQualityRetries   = qualityRetriesUsed;
+        LastSideBranchCount  = finalSpineCount;  // branches spawning from spine corridor sides
         // Scale-aware stats
         LastTargetRoomCount  = targetRoomCount;
         LastDeadEndCount     = terminalsCapped; // corridors capped = dead ends without terminal rooms
@@ -3037,7 +3329,7 @@ public class ShipLayoutGenerator : MonoBehaviour
         LastEngLabPlaced     = engHL;
         int leftRooms = 0, rightRooms = 0;
         for (int i = 0; i < spineCount; i++) { if (sHL[i]) leftRooms++; if (sHR[i]) rightRooms++; }
-        for (int b = 0; b < branchCount; b++) { if (bHL[b]) leftRooms++; if (bHR[b]) rightRooms++; }
+        for (int b = 0; b < branchCount; b++) { if (!bIsSpine[b] && bHL[b]) leftRooms++; if (!bIsSpine[b] && bHR[b]) rightRooms++; }
         if (engHL) leftRooms++; if (engHR) rightRooms++;
         LastRoomsLeftCount  = leftRooms;
         LastRoomsRightCount = rightRooms;
@@ -3050,8 +3342,8 @@ public class ShipLayoutGenerator : MonoBehaviour
                 "[ProcGen:AI] <b>GENERATION COMPLETE</b>  Seed={0}{1}",
                 actualSeed, qualityRetriesUsed > 0 ? "  (retry " + qualityRetriesUsed + ")" : ""));
             Debug.Log(string.Format(
-                "[ProcGen:AI]   Stats  : <b>{0} placed</b>  (lvl={1}  spines={2}  branches={3})",
-                targetRoomCount, lvl, spineCount, branchCount));
+                "[ProcGen:AI]   Stats  : <b>{0} placed</b>  (lvl={1}  spines={2}  branches={3}  spine-side={4})",
+                targetRoomCount, lvl, spineCount, branchCount, finalSpineCount));
             Debug.Log(string.Format(
                 "[ProcGen:AI]   Spine  : {0} corridors | CargoBay after cor{1}",
                 spineCount, cargoAfterIdx - 1));
@@ -3059,8 +3351,8 @@ public class ShipLayoutGenerator : MonoBehaviour
                 "[ProcGen:AI]   Rooms  : <color=#00ff88>{0} placed</color> / <color=#ff4444>{1} skipped</color>",
                 roomsPlaced, roomsSkipped));
             Debug.Log(string.Format(
-                "[ProcGen:AI]   Branches ({0}): <color=#00ff88>{1}×Z-shape</color> | <color=#ffcc00>{2}×L-shape</color> | <color=#ff9988>{3}×straight</color> | {4} terminal(s) capped",
-                branchCount, finalZCount, finalLCount, finalSCount, terminalsCapped));
+                "[ProcGen:AI]   Branches ({0}): <color=#00ff88>{1}×Z-shape</color> | <color=#ffcc00>{2}×L-shape</color> | <color=#ff9988>{3}×straight</color> | <color=#88ccff>{4}×spine-side</color> | {5} terminal(s) capped",
+                branchCount, finalZCount, finalLCount, finalSCount, finalSpineCount, terminalsCapped));
             Debug.Log(string.Format(
                 "[ProcGen:AI]   Vents  : {0} segments | {1} ceiling cuts | {2} fallback seals",
                 ventSegs, ventCutsMade, ceilFixes));

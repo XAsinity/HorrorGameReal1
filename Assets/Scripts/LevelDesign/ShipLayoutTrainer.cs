@@ -57,7 +57,7 @@ public class ShipLayoutTrainer : MonoBehaviour
     // ── Genome encoding ────────────────────────────────────────────────────
     // Each genome is a float[] of length GENOME_LEN.
     // Values are in [0,1] and are decoded into the actual parameter ranges at evaluation time.
-    private const int GENOME_LEN = 38;
+    private const int GENOME_LEN = 39;
 
     // Genome indices (keep in sync with Decode / Encode helpers below)
     // ── Original 22 ─────────────────────────────────────────────
@@ -91,6 +91,7 @@ public class ShipLayoutTrainer : MonoBehaviour
     private const int G_LSHAPE_BIAS     = 35; // lShapeBias       [0..1]
     private const int G_SPINE_LEN_MIN   = 36; // spineLenRange.x  [4..35]
     private const int G_SPINE_LEN_MAX   = 37; // spineLenRange.y  [4..35]
+    private const int G_SIDE_SPAWN_BIAS = 38; // sideSpawnBias    [0..1]
 
     // ══════════════════════════════════════════════════════════════════════
     //  ContextMenu entry points
@@ -354,6 +355,7 @@ public class ShipLayoutTrainer : MonoBehaviour
         g[G_LSHAPE_BIAS]    = p.lShapeBias;
         g[G_SPINE_LEN_MIN]  = Norm(p.spineLenRange.x,     4f, 35f);
         g[G_SPINE_LEN_MAX]  = Norm(p.spineLenRange.y,     4f, 35f);
+        g[G_SIDE_SPAWN_BIAS]= p.sideSpawnBias;
         return g;
     }
 
@@ -391,6 +393,7 @@ public class ShipLayoutTrainer : MonoBehaviour
         p.loopChance        = Mathf.Clamp01(g[G_LOOP_CHANCE]);
         p.lShapeBias        = Mathf.Clamp01(g[G_LSHAPE_BIAS]);
         p.spineLenRange     = new Vector2(Denorm(g[G_SPINE_LEN_MIN], 4f, 35f), Denorm(g[G_SPINE_LEN_MAX], 4f, 35f));
+        p.sideSpawnBias     = Mathf.Clamp01(g[G_SIDE_SPAWN_BIAS]);
         // Enforce min ≤ max for all ranges
         p.corridorWidthRange  = Ordered(p.corridorWidthRange);
         p.corridorHeightRange = Ordered(p.corridorHeightRange);
@@ -449,6 +452,7 @@ public class ShipLayoutTrainer : MonoBehaviour
             _gen.trainedParams.loopChance          = p.loopChance;
             _gen.trainedParams.lShapeBias          = p.lShapeBias;
             _gen.trainedParams.spineLenRange       = p.spineLenRange;
+            _gen.trainedParams.sideSpawnBias       = p.sideSpawnBias;
         }
         if (_gen.trainedParams != p) DestroyImmediate(p);
     }
