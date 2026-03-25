@@ -2121,15 +2121,15 @@ public class ShipLayoutGenerator : MonoBehaviour
                 int   k    = pidx[pp++ % poolSize];  // always consume one pool slot (consistent with non-spine logic)
                 float tW   = pRW[k];  // room X-extent (width along spine branch direction)
                 float tD   = pRD[k];  // room Z-extent
-                float[] termMults = { 1.0f, 0.85f, 0.70f };
-                bool    termFit   = false;
-                int termParentCorBdsIdx = bStrCorBdsIdx[b];
-                for (int mi = 0; mi < termMults.Length && !termFit; mi++)
+                float[] spTermMults = { 1.0f, 0.85f, 0.70f };
+                bool    spTermFit   = false;
+                int spTermParentCorBdsIdx = bStrCorBdsIdx[b];
+                for (int mi = 0; mi < spTermMults.Length && !spTermFit; mi++)
                 {
-                    float rW  = Mathf.Max(4f, tW * termMults[mi]);
-                    float rD  = Mathf.Max(3f, tD * termMults[mi]);
+                    float rW  = Mathf.Max(4f, tW * spTermMults[mi]);
+                    float rD  = Mathf.Max(3f, tD * spTermMults[mi]);
                     float rCX = sd * (HalfCor + bStrLen[b] + rW / 2f);
-                    if (ProcTryRegister(bds, rCX, spCZ, rW / 2f, rD / 2f, kPad, termParentCorBdsIdx))
+                    if (ProcTryRegister(bds, rCX, spCZ, rW / 2f, rD / 2f, kPad, spTermParentCorBdsIdx))
                     {
                         bTermExists[b] = true;
                         bTermW[b]  = rW; bTermD[b]  = rD;
@@ -2137,10 +2137,10 @@ public class ShipLayoutGenerator : MonoBehaviour
                         bTermCZ[b] = spCZ;
                         bTermNm[b] = pName[k];
                         roomsPlaced++;
-                        termFit = true;
+                        spTermFit = true;
                     }
                 }
-                if (!termFit)
+                if (!spTermFit)
                 {
                     bTermExists[b] = false;
                     bTermNm[b]     = "(spine-cap)";
