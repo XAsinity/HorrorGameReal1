@@ -44,10 +44,10 @@ public class ShipLayoutTrainedParams : ScriptableObject
     [Range(0f, 1f)] public float zShapeBias       = 0.50f; // chance initial roll chooses Z over straight
 
     // ── Ship Scale (level-driven) ──────────────────────────────────────────
-    [Header("Ship Scale (level-driven)")]
-    [Tooltip("Base room budget at level 1.  Actual budget = baseRoomBudget + level * roomBudgetPerLevel")]
+    [Header("Ship Scale (level-driven) — DEPRECATED")]
+    [Tooltip("DEPRECATED — no longer used for gating. Map size is driven by level-tier spine/branch counts and the evolutionary scorer.")]
     public int baseRoomBudget = 5;
-    [Tooltip("Rooms added per level (~35 rooms at level 200 with default 0.15).")]
+    [Tooltip("DEPRECATED — no longer used for gating. Kept for asset serialization compatibility only.")]
     public float roomBudgetPerLevel = 0.15f;
 
     // ── Room Type Weights ──────────────────────────────────────────────────
