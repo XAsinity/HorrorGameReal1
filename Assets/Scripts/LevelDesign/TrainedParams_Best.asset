@@ -12,43 +12,44 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 719cdd58752d45c0a41eb0bd7fa31314, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::ShipLayoutTrainedParams
-  corridorWidthRange: {x: 3.1118844, y: 3.753034}
-  corridorHeightRange: {x: 3.2124405, y: 4}
-  roomHeightRange: {x: 2.5, y: 3.3120089}
-  spineLenRange: {x: 6.625059, y: 15.732601}
+  corridorWidthRange: {x: 2.536982, y: 3.4323165}
+  corridorHeightRange: {x: 3.5133963, y: 4}
+  roomHeightRange: {x: 2.7979383, y: 3.5741189}
+  spineLenRange: {x: 13.603419, y: 32.5789}
   dockWRange: {x: 14, y: 18}
   dockDRange: {x: 10, y: 14}
   dockHRange: {x: 5, y: 6}
   cargoWRange: {x: 7, y: 10}
   cargoDRange: {x: 5, y: 8}
   cargoHRange: {x: 3.5, y: 5}
-  engWRange: {x: 10.067031, y: 13.891174}
-  engDRange: {x: 9.921603, y: 12.693793}
-  engHRange: {x: 3.533265, y: 3.8593843}
+  engWRange: {x: 14.771114, y: 14.910385}
+  engDRange: {x: 10.176709, y: 11.429588}
+  engHRange: {x: 4.0167537, y: 4.280129}
   branchCountMin: 1
   branchCountMax: 6
-  zStrLenRange: {x: 4.5619807, y: 18.724}
-  zSideLenRange: {x: 6.487508, y: 8.06102}
-  zFinLenRange: {x: 5.5920405, y: 6.49021}
-  spineRoomBias: 0.23508164
+  zStrLenRange: {x: 3, y: 14.522699}
+  zSideLenRange: {x: 5.314953, y: 23.081326}
+  zFinLenRange: {x: 6.953697, y: 15.172268}
+  spineRoomBias: 0.62673867
   spineRoom2Bias: 0.75
-  engSideRoomBias: 1
-  branchSideRoomBias: 0.040370893
-  zShapeBias: 0.92908806
-  baseRoomBudget: 14
-  roomBudgetPerLevel: 0.63657457
-  weightCorridor: 0.5703601
-  weightHub: 1.9178509
-  weightUtility: 0
-  weightTerminal: 1.0308608
+  engSideRoomBias: 0.64766705
+  branchSideRoomBias: 0.4100866
+  zShapeBias: 0.6465642
+  baseRoomBudget: 19
+  roomBudgetPerLevel: 0.12356543
+  weightCorridor: 0.5601437
+  weightHub: 0.71268755
+  weightUtility: 0.9112429
+  weightTerminal: 0
   branchChance: 0
   maxBranchDepth: 6
-  sideRoomChance: 0.32449734
-  doubleSideChance: 0.2770905
-  extraEngChance: 0
-  extraCargoChance: 0.7944413
-  loopChance: 0.7282828
-  lShapeBias: 0
-  trainedFitnessScore: 692.125
+  sideRoomChance: 0.44520056
+  doubleSideChance: 0.4329208
+  extraEngChance: 0.06544172
+  extraCargoChance: 0.66722304
+  loopChance: 0
+  lShapeBias: 0.8613306
+  sideSpawnBias: 0.062052164
+  trainedFitnessScore: 514.18243
   evaluationSeedCount: 32000
   trainedGeneration: 200
