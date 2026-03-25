@@ -46,12 +46,21 @@ public static class ShipLayoutScorer
     private const float W_ROOM_RATIO        = +20f;  // multiplier: (placed / (placed+skipped)) × this
     private const float W_DEAD_END          = -2f;   // mild penalty per capped corridor (dead-end)
 
-    // Map physical size rewards (level-scaled)
-    private const float W_MAP_SCALE_PER_ROOM    = +0.5f;  // rooms placed × trainingLevel / LEVEL_SCALE_DIV × this weight
+    // ── Level-proportional size scaling ──────────────────────────────────────
+    // levelScale = (trainingLevel / 50)² — quadratic growth so level 200 = 16×, level 100 = 4×
+    // Minimum viable rooms: max(3, level × 0.15) — at level 200 that is 30 rooms
+    // Under-minimum penalty: -(shortfall)² × 5  (quadratic, gets devastating fast)
+    // Above-minimum reward:  +roomsPlaced × level × 0.3  (each room worth more at high levels)
+    private const float MIN_ROOMS_PER_LEVEL = 0.15f;   // slope: rooms expected = level × this
+    private const float UNDER_MIN_PENALTY   = 5f;      // multiplier for quadratic under-minimum penalty
+    private const float ABOVE_MIN_REWARD    = 0.3f;    // per-room × level reward when at/above minimum
+
+    // Legacy level-scaled map size rewards (kept, but now multiplied by levelScale)
+    private const float W_MAP_SCALE_PER_ROOM    = +0.5f;  // rooms × level / LEVEL_SCALE_DIV × this
     private const float W_MANY_BRANCHES         = +10f;   // bonus when branchCount >= 4 at high levels
     private const float W_LONG_SPINE            = +8f;    // bonus when spineCount >= 4 at high levels
     private const float W_ROOM_COUNT_VERY_HIGH  = -15f;   // penalty for small rooms at trainingLevel > 160
-    private const float LEVEL_SCALE_DIV         =  50f;   // divisor for level-scaled map size reward; at level 200 with 30 rooms: 30*200/50*0.5=60 pts
+    private const float LEVEL_SCALE_DIV         =  50f;   // divisor for level-scaled map size reward
     // Per-level bonus weights for spine and branch counts at high levels
     private const float SPINE_BONUS_PER_LEVEL   = 0.05f;  // LastSpineCount  × trainingLevel × this when trainingLevel > 100
     private const float BRANCH_BONUS_PER_LEVEL  = 0.08f;  // LastBranchCount × trainingLevel × this when trainingLevel > 100
@@ -177,12 +186,10 @@ public static class ShipLayoutScorer
         }
 
         // ── Level-scaled minimum requirements (budget-relative thresholds) ──
-        // Use TargetRoomCount to scale with the current level's room budget rather than
-        // fixed magic numbers (previously hardcoded as 3/5 regardless of map size).
+        // These are LEGACY soft penalties — the primary gate is now the quadratic
+        // under-minimum penalty in the size-gate block above.  Kept for continuity.
         int minRoomsForMediumTier = Mathf.Max(3, s.TargetRoomCount / 5);
         int minRoomsForLargeTier  = Mathf.Max(5, s.TargetRoomCount / 3);
-        // Thresholds align with budget-based tiers in the generator:
-        //   lvl > 80  → medium complexity,  lvl > 120 → large,  lvl > 160 → full
         if (trainingLevel > 80  && s.RoomsPlaced < minRoomsForMediumTier) score -= 5f;
         if (trainingLevel > 120 && s.RoomsPlaced < minRoomsForLargeTier)  score -= 8f;
         if (trainingLevel > 160 && s.RoomsPlaced < minRoomsForLargeTier)  score += W_ROOM_COUNT_VERY_HIGH;  // harsher at very high level
@@ -193,25 +200,47 @@ public static class ShipLayoutScorer
         if (trainingLevel > 160 && s.BranchCount < 2) score -= 5f;    // keep existing mild penalty
         if (trainingLevel > 180 && s.BranchCount < 3) score -= 10f;   // escalating penalty at very high levels
 
-        // ── Map physical size rewards (level-scaled) ──────────────────────────
-        // Reward rooms placed proportional to training level — the higher the level,
-        // the stronger the incentive to build bigger maps.
+        // ── Level-proportional minimum size gate + exponential scaling ──────────
+        // levelScale = (level / 50)²  → level 50=1×, level 100=4×, level 200=16×
+        // minExpected = max(3, level × 0.15)  → level 200 expects 30 rooms minimum
         if (trainingLevel > 0)
-            score += (s.RoomsPlaced * trainingLevel / LEVEL_SCALE_DIV) * W_MAP_SCALE_PER_ROOM;
+        {
+            float levelScale    = (trainingLevel / 50f) * (trainingLevel / 50f);
+            float minExpected   = Mathf.Max(3f, trainingLevel * MIN_ROOMS_PER_LEVEL);
+            float actual        = s.RoomsPlaced;
 
-        // Proportional branch count bonus — reward more branches at higher levels
-        if (trainingLevel > 0)
-            score += s.BranchCount * (trainingLevel / 40f) * 3f;
+            if (actual < minExpected)
+            {
+                // Quadratic penalty — gets devastating as the shortfall grows
+                float shortfall = minExpected - actual;
+                score -= shortfall * shortfall * UNDER_MIN_PENALTY;
+            }
+            else
+            {
+                // Per-room reward scales with level AND levelScale — each room at level 200
+                // is worth 16× more than at level 50, strongly incentivising large maps.
+                score += actual * trainingLevel * ABOVE_MIN_REWARD * levelScale;
+            }
 
-        // Composite map size reward — total rooms + branch weight + spine weight, level-scaled
-        if (trainingLevel > 0)
-            score += (s.RoomsPlaced + s.BranchCount * 2 + s.SpineCount) * (trainingLevel / 100f) * 2f;
+            // All legacy size rewards now multiplied by levelScale for exponential growth
+            score += (s.RoomsPlaced * trainingLevel / LEVEL_SCALE_DIV) * W_MAP_SCALE_PER_ROOM * levelScale;
 
-        // Explicit map scale bonus at high levels — strongly incentivise large maps
+            // Branch / spine count bonuses also scale exponentially
+            score += s.BranchCount * (trainingLevel / 40f) * 3f * levelScale;
+            score += (s.RoomsPlaced + s.BranchCount * 2 + s.SpineCount) * (trainingLevel / 100f) * 2f * levelScale;
+        }
+        else
+        {
+            // No training level — apply a small base size reward
+            score += s.RoomsPlaced * W_MAP_SCALE_PER_ROOM;
+        }
+
+        // Explicit map scale bonus at high levels — exponentially scaled
         if (trainingLevel > 100)
         {
-            score += gen.LastSpineCount  * trainingLevel * SPINE_BONUS_PER_LEVEL;
-            score += gen.LastBranchCount * trainingLevel * BRANCH_BONUS_PER_LEVEL;
+            float levelScale = (trainingLevel / 50f) * (trainingLevel / 50f);
+            score += gen.LastSpineCount  * trainingLevel * SPINE_BONUS_PER_LEVEL  * levelScale;
+            score += gen.LastBranchCount * trainingLevel * BRANCH_BONUS_PER_LEVEL * levelScale;
         }
 
         // Reward many branches at high levels

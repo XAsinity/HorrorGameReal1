@@ -89,8 +89,8 @@ public class ShipLayoutTrainer : MonoBehaviour
     private const int G_EXTRA_CARGO     = 33; // extraCargoChance [0..1]
     private const int G_LOOP_CHANCE     = 34; // loopChance       [0..1]
     private const int G_LSHAPE_BIAS     = 35; // lShapeBias       [0..1]
-    private const int G_SPINE_LEN_MIN   = 36; // spineLenRange.x  [4..35]
-    private const int G_SPINE_LEN_MAX   = 37; // spineLenRange.y  [4..35]
+    private const int G_SPINE_LEN_MIN   = 36; // spineLenRange.x  [4..80]
+    private const int G_SPINE_LEN_MAX   = 37; // spineLenRange.y  [4..80]
     private const int G_SIDE_SPAWN_BIAS = 38; // sideSpawnBias    [0..1]
 
     // ══════════════════════════════════════════════════════════════════════
@@ -102,6 +102,24 @@ public class ShipLayoutTrainer : MonoBehaviour
 
     [ContextMenu("Train Layout AI (200 generations)")]
     public void Train200() => RunTraining(200);
+
+    [ContextMenu("Train Layout AI (100 gen × 1000 seeds)")]
+    public void Train100_1000Seeds()
+    {
+        int prev = seedsPerIndividual;
+        seedsPerIndividual = 1000;
+        RunTraining(100);
+        seedsPerIndividual = prev;
+    }
+
+    [ContextMenu("Train Layout AI (200 gen × 1000 seeds)")]
+    public void Train200_1000Seeds()
+    {
+        int prev = seedsPerIndividual;
+        seedsPerIndividual = 1000;
+        RunTraining(200);
+        seedsPerIndividual = prev;
+    }
 
     [ContextMenu("Evaluate Current Params (100 seeds)")]
     public void EvalCurrent100() => EvaluateCurrentParams(100);
@@ -346,15 +364,15 @@ public class ShipLayoutTrainer : MonoBehaviour
         g[G_W_UTILITY]      = Norm(p.weightUtility,        0f,  2f);
         g[G_W_TERMINAL]     = Norm(p.weightTerminal,       0f,  2f);
         g[G_BRANCH_CHANCE]  = p.branchChance;
-        g[G_MAX_BRANCH]     = Norm(p.maxBranchDepth,       1f,  8f);
+        g[G_MAX_BRANCH]     = Norm(p.maxBranchDepth,       1f, 15f);
         g[G_SIDE_ROOM_CH]   = p.sideRoomChance;
         g[G_DOUBLE_SIDE_CH] = p.doubleSideChance;
         g[G_EXTRA_ENG]      = p.extraEngChance;
         g[G_EXTRA_CARGO]    = p.extraCargoChance;
         g[G_LOOP_CHANCE]    = p.loopChance;
         g[G_LSHAPE_BIAS]    = p.lShapeBias;
-        g[G_SPINE_LEN_MIN]  = Norm(p.spineLenRange.x,     4f, 35f);
-        g[G_SPINE_LEN_MAX]  = Norm(p.spineLenRange.y,     4f, 35f);
+        g[G_SPINE_LEN_MIN]  = Norm(p.spineLenRange.x,     4f, 80f);
+        g[G_SPINE_LEN_MAX]  = Norm(p.spineLenRange.y,     4f, 80f);
         g[G_SIDE_SPAWN_BIAS]= p.sideSpawnBias;
         return g;
     }
@@ -385,14 +403,14 @@ public class ShipLayoutTrainer : MonoBehaviour
         p.weightUtility     = Denorm(g[G_W_UTILITY],  0f, 2f);
         p.weightTerminal    = Denorm(g[G_W_TERMINAL], 0f, 2f);
         p.branchChance      = Mathf.Clamp01(g[G_BRANCH_CHANCE]);
-        p.maxBranchDepth    = Mathf.Clamp(Mathf.RoundToInt(Denorm(g[G_MAX_BRANCH], 1f, 8f)), 1, 8);
+        p.maxBranchDepth    = Mathf.Clamp(Mathf.RoundToInt(Denorm(g[G_MAX_BRANCH], 1f, 15f)), 1, 15);
         p.sideRoomChance    = Mathf.Clamp01(g[G_SIDE_ROOM_CH]);
         p.doubleSideChance  = Mathf.Clamp01(g[G_DOUBLE_SIDE_CH]);
         p.extraEngChance    = Mathf.Clamp01(g[G_EXTRA_ENG]);
         p.extraCargoChance  = Mathf.Clamp01(g[G_EXTRA_CARGO]);
         p.loopChance        = Mathf.Clamp01(g[G_LOOP_CHANCE]);
         p.lShapeBias        = Mathf.Clamp01(g[G_LSHAPE_BIAS]);
-        p.spineLenRange     = new Vector2(Denorm(g[G_SPINE_LEN_MIN], 4f, 35f), Denorm(g[G_SPINE_LEN_MAX], 4f, 35f));
+        p.spineLenRange     = new Vector2(Denorm(g[G_SPINE_LEN_MIN], 4f, 80f), Denorm(g[G_SPINE_LEN_MAX], 4f, 80f));
         p.sideSpawnBias     = Mathf.Clamp01(g[G_SIDE_SPAWN_BIAS]);
         // Enforce min ≤ max for all ranges
         p.corridorWidthRange  = Ordered(p.corridorWidthRange);

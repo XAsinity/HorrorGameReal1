@@ -14,7 +14,7 @@ public class ShipLayoutTrainedParams : ScriptableObject
     public Vector2 corridorWidthRange  = new Vector2(2.5f, 3.5f);
     public Vector2 corridorHeightRange = new Vector2(2.5f, 3.2f);
     public Vector2 roomHeightRange     = new Vector2(3.0f, 3.5f);
-    public Vector2 spineLenRange       = new Vector2(6f,  30f);
+    public Vector2 spineLenRange       = new Vector2(6f,  60f);
 
     [Header("Major Rooms")]
     public Vector2 dockWRange  = new Vector2(14f, 18f);
@@ -31,7 +31,7 @@ public class ShipLayoutTrainedParams : ScriptableObject
 
     [Header("Branch Configuration")]
     [Range(1, 8)] public int branchCountMin = 1;
-    [Range(1, 8)] public int branchCountMax = 6;
+    [Range(1, 15)] public int branchCountMax = 6;
     public Vector2 zStrLenRange    = new Vector2(4f, 18f);
     public Vector2 zSideLenRange   = new Vector2(5f, 25f);
     public Vector2 zFinLenRange    = new Vector2(5f, 22f);
@@ -66,7 +66,7 @@ public class ShipLayoutTrainedParams : ScriptableObject
     [Range(0f, 1f)]
     [Tooltip("Chance that each available branch slot off engineering is filled.")]
     public float branchChance = 0.3f;
-    [Range(1, 8)]
+    [Range(1, 15)]
     [Tooltip("Maximum branches that can fork off engineering.")]
     public int maxBranchDepth = 8;
     [Range(0f, 1f)]
