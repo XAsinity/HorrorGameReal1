@@ -44,7 +44,6 @@ public static class ShipLayoutScorer
 
     // Scale-aware rewards (new)
     private const float W_ROOM_RATIO        = +20f;  // multiplier: (placed / (placed+skipped)) × this
-    private const float W_BUDGET_MET        = +10f;  // bonus when rooms placed ≥ 80 % of target budget
     private const float W_DEAD_END          = -2f;   // mild penalty per capped corridor (dead-end)
 
     // Map physical size rewards (level-scaled)
@@ -105,13 +104,6 @@ public static class ShipLayoutScorer
         {
             float roomRatio = (float)s.RoomsPlaced / totalAttempted;
             score += roomRatio * W_ROOM_RATIO;
-        }
-
-        // Budget ratio — reward actually meeting the level's target room count
-        if (s.TargetRoomCount > 0)
-        {
-            float budgetRatio = (float)s.RoomsPlaced / s.TargetRoomCount;
-            if (budgetRatio >= 0.8f) score += W_BUDGET_MET;
         }
 
         // Dead-end penalty — corridors capped without terminal rooms reduce score mildly
