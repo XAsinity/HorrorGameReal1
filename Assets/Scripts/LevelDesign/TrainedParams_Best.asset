@@ -14,7 +14,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::ShipLayoutTrainedParams
   corridorWidthRange: {x: 2.536982, y: 3.4323165}
   corridorHeightRange: {x: 3.5133963, y: 4}
-  roomHeightRange: {x: 2.7979383, y: 3.5741189}
+  roomHeightRange: {x: 3.5133963, y: 4}
   spineLenRange: {x: 13.603419, y: 32.5789}
   dockWRange: {x: 14, y: 18}
   dockDRange: {x: 10, y: 14}
