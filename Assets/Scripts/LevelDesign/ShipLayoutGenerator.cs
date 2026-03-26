@@ -60,6 +60,10 @@ public class ShipLayoutGenerator : MonoBehaviour
     // Branch lateral-direction diversity — for left/right map spread scoring
     [System.NonSerialized] public int LastBranchesLeft;     // branches extending toward −X (spine: bSpawnSide==-1; eng Z/L: bSideDir==-1; eng straight: bX<0)
     [System.NonSerialized] public int LastBranchesRight;    // branches extending toward +X (spine: bSpawnSide==+1; eng Z/L: bSideDir==+1; eng straight: bX>0)
+    // Map footprint (bounding box of all registered AABB entries)
+    [System.NonSerialized] public float LastMapWidth;   // total X span of the generated layout
+    [System.NonSerialized] public float LastMapDepth;   // total Z span of the generated layout
+    [System.NonSerialized] public float LastMapArea;    // LastMapWidth * LastMapDepth (rough 2-D footprint)
 
     /// <summary>
     /// Set by ShipLayoutTrainer before each evaluation to scale procedural map complexity
@@ -636,10 +640,14 @@ public class ShipLayoutGenerator : MonoBehaviour
     //  vY is the vent bottom; the cap is centred at vY + ventH/2
     //  to align with the shaft cross-section (which is bottom-anchored).
     // ─────────────────────────────────────────────────────────────
-    private void AddVentCap(string name, float x, float vY, float z)
+    // runAlongX = false (default): vent run travels along Z → cap faces Z (thin along Z)
+    // runAlongX = true:            vent run travels along X → cap faces X (thin along X)
+    private void AddVentCap(string name, float x, float vY, float z, bool runAlongX = false)
     {
         if (scoringOnly) return;
-        MakeBoxOnParent(transform, name, new Vector3(x, vY + ventH / 2f, z), ventW, ventH, wallThickness);
+        float capW = runAlongX ? wallThickness : ventW;
+        float capD = runAlongX ? ventW : wallThickness;
+        MakeBoxOnParent(transform, name, new Vector3(x, vY + ventH / 2f, z), capW, ventH, capD);
     }
 
     private void AddVentCross(string name, float x, float y, float z)
@@ -2689,7 +2697,7 @@ public class ShipLayoutGenerator : MonoBehaviour
                     int    bsp    = spineLeftBranch[i];
                     float  endX   = -(HalfCor + bStrLen[bsp]);  // far end of the branch in -X
                     ConnectVent("VB_SpBL" + i, -hvW, vY, sCZ[i], endX + hvW, vY, sCZ[i]); ventSegs++;
-                    AddVentCap("VentCap_SpB" + bsp, endX, vY, sCZ[i]);
+                    AddVentCap("VentCap_SpB" + bsp, endX, vY, sCZ[i], true);
                 }
 
                 if (sHR[i])
@@ -2706,7 +2714,7 @@ public class ShipLayoutGenerator : MonoBehaviour
                     int    bsp    = spineRightBranch[i];
                     float  endX   = HalfCor + bStrLen[bsp];  // far end of the branch in +X
                     ConnectVent("VB_SpBR" + i, hvW, vY, sCZ[i], endX - hvW, vY, sCZ[i]); ventSegs++;
-                    AddVentCap("VentCap_SpB" + bsp, endX, vY, sCZ[i]);
+                    AddVentCap("VentCap_SpB" + bsp, endX, vY, sCZ[i], true);
                 }
             }
 
@@ -3402,6 +3410,26 @@ public class ShipLayoutGenerator : MonoBehaviour
         // Scale-aware stats
         LastTargetRoomCount  = targetRoomCount;
         LastDeadEndCount     = terminalsCapped; // corridors capped = dead ends without terminal rooms
+
+        // Compute map footprint bounding box from all registered AABB entries.
+        // bds entries are Vector4(centerX, centerZ, halfW, halfD).
+        {
+            float minX = float.MaxValue, maxX = float.MinValue;
+            float minZ = float.MaxValue, maxZ = float.MinValue;
+            for (int idx = 0; idx < bds.Count; idx++)
+            {
+                var bd = bds[idx];
+                float bMinX = bd.x - bd.z, bMaxX = bd.x + bd.z;
+                float bMinZ = bd.y - bd.w, bMaxZ = bd.y + bd.w;
+                if (bMinX < minX) minX = bMinX;
+                if (bMaxX > maxX) maxX = bMaxX;
+                if (bMinZ < minZ) minZ = bMinZ;
+                if (bMaxZ > maxZ) maxZ = bMaxZ;
+            }
+            LastMapWidth = bds.Count > 0 ? Mathf.Max(0f, maxX - minX) : 0f;
+            LastMapDepth = bds.Count > 0 ? Mathf.Max(0f, maxZ - minZ) : 0f;
+            LastMapArea  = LastMapWidth * LastMapDepth;
+        }
 
         // Structural detail stats for scorer anti-exploit rewards
         LastEngReactorPlaced = engHR;
