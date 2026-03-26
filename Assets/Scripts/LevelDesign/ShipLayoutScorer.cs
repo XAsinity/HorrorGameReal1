@@ -103,6 +103,9 @@ public static class ShipLayoutScorer
         s.SideBranchCount   = gen.LastSideBranchCount;
         s.BranchesLeft      = gen.LastBranchesLeft;
         s.BranchesRight     = gen.LastBranchesRight;
+        s.MapArea           = gen.LastMapArea;
+        s.MapWidth          = gen.LastMapWidth;
+        s.MapDepth          = gen.LastMapDepth;
 
         // Base score
         float score = 0f;
@@ -239,6 +242,21 @@ public static class ShipLayoutScorer
         if (trainingLevel > 150 && s.BranchCount < 4) score -= 15f;
         if (trainingLevel > 160 && s.BranchCount < 2) score -= 5f;    // keep existing mild penalty
         if (trainingLevel > 180 && s.BranchCount < 3) score -= 10f;   // escalating penalty at very high levels
+        // Tightened branch floors: at level 150+ require 5 branches; at 190+ require 7 (-30 each missing)
+        if (trainingLevel >= 150)
+        {
+            int minBranches150 = 5;
+            int shortfall150 = minBranches150 - s.BranchCount;
+            if (shortfall150 > 0)
+                score -= shortfall150 * 30f;
+        }
+        if (trainingLevel >= 190)
+        {
+            int minBranches190 = 7;
+            int shortfall190 = minBranches190 - s.BranchCount;
+            if (shortfall190 > 0)
+                score -= shortfall190 * 30f;
+        }
 
         // ── Level-proportional minimum size gate + exponential scaling ──────────
         // levelScale = (level / 50)²  → level 50=1×, level 100=4×, level 200=16×
@@ -268,6 +286,29 @@ public static class ShipLayoutScorer
             // Branch / spine count bonuses also scale exponentially
             score += s.BranchCount * (trainingLevel / 40f) * 3f * levelScale;
             score += (s.RoomsPlaced + s.BranchCount * 2 + s.SpineCount) * (trainingLevel / 100f) * 2f * levelScale;
+
+            // ── Harsh small-map penalty at high levels ──────────────────────────
+            // At level 100+, maps with fewer than level/10 rooms are deeply penalised.
+            if (trainingLevel > 100 && s.RoomsPlaced < trainingLevel / 10)
+                score -= 50f * (trainingLevel / 50f);
+
+            // Additional escalating floor: if rooms < level/20, apply extra penalty.
+            float floorRooms = trainingLevel / 20f;
+            if (s.RoomsPlaced < floorRooms)
+            {
+                float floorShortfall = floorRooms - s.RoomsPlaced;
+                score -= floorShortfall * floorShortfall * 3f;
+            }
+
+            // ── Map area reward — proportional to level ─────────────────────────
+            // Rewards layouts that physically occupy a larger footprint.
+            score += s.MapArea * (trainingLevel / 100f) * 5.0f;
+
+            // ── Multiplicative room reward — each additional room more valuable ──
+            // At high levels every room placed gives a stacking bonus so the AI is
+            // continuously rewarded for squeezing in extra rooms.
+            if (trainingLevel > 50)
+                score += s.RoomsPlaced * (trainingLevel / 25f);
         }
         else
         {
@@ -316,12 +357,12 @@ public static class ShipLayoutScorer
         string color = s.Total >= 50f ? "#00ff88" : s.Total >= 0f ? "#ffcc00" : "#ff4444";
         Debug.Log(string.Format(
             "[ProcGen:Score]{0} <color={1}><b>Score={2:F1}</b></color>  " +
-            "rooms:{3}+/{4}-  target:{5}  branches:{6}Z/{7}L/{8}S  caps:{9}  diag:{10}ov/{11}gap/{12}cor",
+            "rooms:{3}+/{4}-  target:{5}  branches:{6}Z/{7}L/{8}S  caps:{9}  diag:{10}ov/{11}gap/{12}cor  area:{13:F0}",
             tag, color, s.Total,
             s.RoomsPlaced, s.RoomsSkipped, s.TargetRoomCount,
             s.ZShapeCount, s.LShapeCount, s.StraightCount,
             s.TerminalsCapped,
-            s.OverlapCount, s.GapCount, s.CorridorOverlaps));
+            s.OverlapCount, s.GapCount, s.CorridorOverlaps, s.MapArea));
     }
 
     // ── Data structures ───────────────────────────────────────────────────────
@@ -353,11 +394,15 @@ public static class ShipLayoutScorer
         // Branch lateral-direction diversity
         public int   BranchesLeft;     // branches extending toward −X
         public int   BranchesRight;    // branches extending toward +X
+        // Map footprint
+        public float MapArea;          // bounding-box area (world units²) of all placed rooms/corridors
+        public float MapWidth;         // X span of the bounding box
+        public float MapDepth;         // Z span of the bounding box
 
         public override string ToString() =>
-            string.Format("Score={0:F1} rooms={1}/{2} target={3} Z={4} L={5} S={6} caps={7} diag={8}/{9}/{10} vent={11}",
+            string.Format("Score={0:F1} rooms={1}/{2} target={3} Z={4} L={5} S={6} caps={7} diag={8}/{9}/{10} vent={11} area={12:F0}",
                 Total, RoomsPlaced, RoomsPlaced + RoomsSkipped, TargetRoomCount,
                 ZShapeCount, LShapeCount, StraightCount, TerminalsCapped,
-                OverlapCount, GapCount, CorridorOverlaps, VentRoomOverlaps);
+                OverlapCount, GapCount, CorridorOverlaps, VentRoomOverlaps, MapArea);
     }
 }
