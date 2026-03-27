@@ -64,6 +64,8 @@ public class ShipLayoutGenerator : MonoBehaviour
     [System.NonSerialized] public float LastMapWidth;   // total X span of the generated layout
     [System.NonSerialized] public float LastMapDepth;   // total Z span of the generated layout
     [System.NonSerialized] public float LastMapArea;    // LastMapWidth * LastMapDepth (rough 2-D footprint)
+    // Corridor length metrics — used by scorer to penalise overly long single corridors
+    [System.NonSerialized] public float LastMaxSpineLen;  // longest single spine corridor segment
 
     /// <summary>
     /// Set by ShipLayoutTrainer before each evaluation to scale procedural map complexity
@@ -85,6 +87,13 @@ public class ShipLayoutGenerator : MonoBehaviour
     private float ventH = 0.7f;
     private const float kDoorWidth = 1.4f;
     private const float kDoorHeight = 2.4f;
+
+    // Minimum spine and branch counts enforced at high training levels to prevent
+    // the AI from converging on degenerate (too small) maps regardless of genome values.
+    private const int kSpineFloorLvl1   = 100; private const int kSpineFloorMin1 = 4;
+    private const int kSpineFloorLvl2   = 150; private const int kSpineFloorMin2 = 6;
+    private const int kBranchFloorLvl1  = 100; private const int kBranchFloorMin1 = 4;
+    private const int kBranchFloorLvl2  = 150; private const int kBranchFloorMin2 = 6;
 
     // Auto-retry state — _procRetries is reset to 0 at the end of each successful (or exhausted)
     // generation.  _procBaseSeed is set once on the first attempt and reused for all retries.
@@ -1274,6 +1283,10 @@ public class ShipLayoutGenerator : MonoBehaviour
                          : lvl <= 150 ? 8
                          : 16; // rng.Next(2,16) = 2..15 spines at level 200+
         int spineCount = rng.Next(2, spineMaxExcl);
+        // Enforce minimum spine count floors so the AI always produces adequate structure
+        // at high training levels regardless of how the genome was set.
+        if (lvl > kSpineFloorLvl1) spineCount = Mathf.Max(spineCount, kSpineFloorMin1);
+        if (lvl > kSpineFloorLvl2) spineCount = Mathf.Max(spineCount, kSpineFloorMin2);
         // cargoAfterIdx: insert cargo after corridor [cargoAfterIdx-1].
         // Using spineCount (exclusive upper) ensures at least one corridor
         // always follows the CargoBay before Engineering.
@@ -1321,6 +1334,10 @@ public class ShipLayoutGenerator : MonoBehaviour
         // At branchChance=0 always 1; at 1.0 always branchUpperBound.
         int branchLower = Mathf.Max(1, (int)(branchUpperBound * (1f - tp_branchChance)));
         int branchCount = rng.Next(branchLower, branchUpperBound + 1);
+        // Enforce minimum branch count floors so the AI always produces adequate branching
+        // at high training levels regardless of trained branchChance value.
+        if (lvl > kBranchFloorLvl1) branchCount = Mathf.Max(branchCount, kBranchFloorMin1);
+        if (lvl > kBranchFloorLvl2) branchCount = Mathf.Max(branchCount, kBranchFloorMin2);
         float[] bX       = new float[branchCount];
         int[]   bPat     = new int[branchCount];    // 0=straight, 1=Z-shaped, 2=L-shaped
         int[]   bSideDir = new int[branchCount];    // -1=turn left, +1=turn right
@@ -3457,6 +3474,14 @@ public class ShipLayoutGenerator : MonoBehaviour
             LastMapWidth = bds.Count > 0 ? Mathf.Max(0f, maxX - minX) : 0f;
             LastMapDepth = bds.Count > 0 ? Mathf.Max(0f, maxZ - minZ) : 0f;
             LastMapArea  = LastMapWidth * LastMapDepth;
+        }
+
+        // Compute max single spine corridor length for long-corridor penalty in scorer.
+        {
+            float maxSpLen = 0f;
+            for (int i = 0; i < spineCount; i++)
+                maxSpLen = Mathf.Max(maxSpLen, sLen[i]);
+            LastMaxSpineLen = maxSpLen;
         }
 
         // Structural detail stats for scorer anti-exploit rewards

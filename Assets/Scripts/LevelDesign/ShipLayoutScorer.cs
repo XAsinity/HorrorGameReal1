@@ -85,6 +85,11 @@ public static class ShipLayoutScorer
     private const float ASPECT_EXTREME_LO     = 0.2f;  // width/depth ratio below this = extreme elongation
     private const float ASPECT_EXTREME_HI     = 5.0f;  // width/depth ratio above this = extreme elongation
 
+    // Long single-corridor penalty — punishes spine corridors that run too far in a straight
+    // line, forcing the AI to prefer shorter, better-connected segments.
+    private const float LONG_COR_THRESHOLD   = 10f;   // units above which a single corridor is penalised
+    private const float W_LONG_CORRIDOR      = -2f;   // base penalty per unit over the threshold (scales with level)
+
 
     /// <summary>Computes and returns a score for the most-recently generated layout.</summary>
     /// <param name="trainingLevel">Current training generation/level (0 = no level-scaled rules).</param>
@@ -114,6 +119,7 @@ public static class ShipLayoutScorer
         s.MapArea           = gen.LastMapArea;
         s.MapWidth          = gen.LastMapWidth;
         s.MapDepth          = gen.LastMapDepth;
+        s.MaxSpineLen       = gen.LastMaxSpineLen;
 
         // Base score
         float score = 0f;
@@ -142,6 +148,19 @@ public static class ShipLayoutScorer
 
         // Dead-end penalty — corridors capped without terminal rooms reduce score mildly
         score += s.DeadEndCount * W_DEAD_END;
+
+        // Long single corridor penalty — spine corridors over the threshold length make
+        // the map feel like a boring hallway.  The longer it runs in a straight line,
+        // the steeper the penalty.  Scales with training level so the AI is increasingly
+        // forced to use shorter, better-connected segments at high levels.
+        if (s.MaxSpineLen > LONG_COR_THRESHOLD)
+        {
+            float excess = s.MaxSpineLen - LONG_COR_THRESHOLD;
+            float longCorPenalty = excess * Mathf.Abs(W_LONG_CORRIDOR);
+            if (trainingLevel > 50)
+                longCorPenalty *= (1f + trainingLevel / 100f);
+            score -= longCorPenalty;
+        }
 
         // Bonus awards
         bool clean = (s.OverlapCount == 0 && s.GapCount == 0 && s.CorridorOverlaps == 0 && s.VentRoomOverlaps == 0);
@@ -420,6 +439,8 @@ public static class ShipLayoutScorer
         public float MapArea;          // bounding-box area (world units²) of all placed rooms/corridors
         public float MapWidth;         // X span of the bounding box
         public float MapDepth;         // Z span of the bounding box
+        // Corridor length metrics
+        public float MaxSpineLen;      // longest single spine corridor segment
 
         public override string ToString() =>
             string.Format("Score={0:F1} rooms={1}/{2} target={3} Z={4} L={5} S={6} caps={7} diag={8}/{9}/{10} vent={11} area={12:F0}",
