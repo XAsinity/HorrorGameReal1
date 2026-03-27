@@ -163,6 +163,15 @@ public class ShipLayoutTrainer : MonoBehaviour
         float   bestEver   = float.NegativeInfinity;
         float[] bestGenome = (float[])pop[0].Clone();
 
+        // ── Adaptive mutation state ────────────────────────────────────────────
+        // When the best fitness hasn't improved for kStagnationLimit generations,
+        // temporarily double the mutation strength to escape local optima.
+        // The boost is reset whenever a new best is found.
+        const int   kStagnationLimit    = 10;   // gens without improvement before boost kicks in
+        const float kMutationBoost      = 2.5f; // multiplier applied to mutationStrength when stagnant
+        const float kMaxMutationStrength= 0.6f; // upper cap on the boosted mutation to avoid pure random drift
+        int stagnationCount = 0;
+
         // ── Generation loop ────────────────────────────────────────────────
         _cancelRequested = false;
         bool cancelled = false;
@@ -222,16 +231,21 @@ public class ShipLayoutTrainer : MonoBehaviour
                 {
                     bestEver   = best;
                     bestGenome = (float[])pop[0].Clone();
+                    stagnationCount = 0;  // reset stagnation on improvement
                     string scoreColor = bestEver >= 80f ? "#00ff88" : bestEver >= 40f ? "#ffcc00" : "#ff9900";
                     Debug.Log(string.Format(
                         "[ProcGen:Train] Gen {0,4}/{1}: <color={2}><b>★ NEW BEST {3:F1}</b></color>  avg={4:F1}  worst={5:F1}",
                         gen + 1, generations, scoreColor, bestEver, avg, worst));
                 }
-                else if ((gen + 1) % 10 == 0)
+                else
                 {
-                    Debug.Log(string.Format(
-                        "[ProcGen:Train] Gen {0,4}/{1}:  best={2:F1}  avg={3:F1}  worst={4:F1}",
-                        gen + 1, generations, best, avg, worst));
+                    stagnationCount++;
+                    if ((gen + 1) % 10 == 0)
+                    {
+                        Debug.Log(string.Format(
+                            "[ProcGen:Train] Gen {0,4}/{1}:  best={2:F1}  avg={3:F1}  worst={4:F1}  stagnant={5}",
+                            gen + 1, generations, best, avg, worst, stagnationCount));
+                    }
                 }
 
                 // Checkpoint save every 50 generations so progress is not lost on a crash
@@ -243,6 +257,18 @@ public class ShipLayoutTrainer : MonoBehaviour
                     SaveBestParams(bestGenome, bestEver, (gen + 1) * populationSize * seedsPerIndividual, gen + 1);
                 }
 
+                // ── Adaptive mutation ──────────────────────────────────────────────
+                // When fitness has been stagnant for kStagnationLimit generations,
+                // temporarily apply a boosted mutation to escape local optima.
+                // The boost decays back to normal once a new best is found.
+                float effectiveMutation = stagnationCount >= kStagnationLimit
+                    ? Mathf.Min(kMaxMutationStrength, mutationStrength * kMutationBoost)
+                    : mutationStrength;
+                if (stagnationCount >= kStagnationLimit && (gen + 1) % 5 == 0)
+                    Debug.Log(string.Format(
+                        "[ProcGen:Train] <color=#ff9900>⚡ Adaptive mutation boost active — stagnant for {0} gens, mutation={1:F3}</color>",
+                        stagnationCount, effectiveMutation));
+
                 // Selection + reproduction
                 int survivors = Mathf.Max(2, populationSize / 2);
                 // Elites (top 10%) survive unchanged
@@ -253,7 +279,7 @@ public class ShipLayoutTrainer : MonoBehaviour
                     int a = rng.Next(survivors);
                     int b = rng.Next(survivors);
                     float[] child = Crossover(pop[a], pop[b], rng);
-                    pop[i] = Mutate(child, mutationStrength, rng);
+                    pop[i] = Mutate(child, effectiveMutation, rng);
                 }
             }
         }
