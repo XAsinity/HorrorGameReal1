@@ -2694,10 +2694,24 @@ public class ShipLayoutGenerator : MonoBehaviour
                 else if (spineLeftTaken[i])
                 {
                     // Spine-side branch on left: vent runs in -X along the branch corridor
-                    int    bsp    = spineLeftBranch[i];
-                    float  endX   = -(HalfCor + bStrLen[bsp]);  // far end of the branch in -X
-                    ConnectVent("VB_SpBL" + i, -hvW, vY, sCZ[i], endX + hvW, vY, sCZ[i]); ventSegs++;
-                    AddVentCap("VentCap_SpB" + bsp, endX + hvW, vY, sCZ[i], true);
+                    int   bsp  = spineLeftBranch[i];
+                    float endX = -(HalfCor + bStrLen[bsp]);  // far end of the branch corridor in -X
+                    if (bTermExists[bsp])
+                    {
+                        // Terminal room exists — extend vent to room center and add a drop
+                        float tX  = bTermX[bsp];   // center X of terminal room (negative)
+                        float tCZ = bTermCZ[bsp];  // center Z (same as spine corridor Z)
+                        ConnectVent("VB_SpBL" + i, -hvW, vY, sCZ[i], tX + hvW, vY, tCZ); ventSegs++;
+                        // Elbow: vent arrives from right (+X = from spine), exits downward
+                        AddVentElbow("VElbow_SpB" + bsp, tX, vY, tCZ, true, true, true, false);
+                        AddVentVertical("VDrop_SpB" + bsp, tX, dropY, tCZ, dropW, dropH, dropW);
+                        CutCeilingForVent(termGen[bsp], dropW, dropW); ventCutsMade++;
+                    }
+                    else
+                    {
+                        ConnectVent("VB_SpBL" + i, -hvW, vY, sCZ[i], endX + hvW, vY, sCZ[i]); ventSegs++;
+                        AddVentCap("VentCap_SpB" + bsp, endX + hvW, vY, sCZ[i], true);
+                    }
                 }
 
                 if (sHR[i])
@@ -2711,10 +2725,24 @@ public class ShipLayoutGenerator : MonoBehaviour
                 else if (spineRightTaken[i])
                 {
                     // Spine-side branch on right: vent runs in +X along the branch corridor
-                    int    bsp    = spineRightBranch[i];
-                    float  endX   = HalfCor + bStrLen[bsp];  // far end of the branch in +X
-                    ConnectVent("VB_SpBR" + i, hvW, vY, sCZ[i], endX - hvW, vY, sCZ[i]); ventSegs++;
-                    AddVentCap("VentCap_SpB" + bsp, endX - hvW, vY, sCZ[i], true);
+                    int   bsp  = spineRightBranch[i];
+                    float endX = HalfCor + bStrLen[bsp];  // far end of the branch corridor in +X
+                    if (bTermExists[bsp])
+                    {
+                        // Terminal room exists — extend vent to room center and add a drop
+                        float tX  = bTermX[bsp];   // center X of terminal room (positive)
+                        float tCZ = bTermCZ[bsp];  // center Z (same as spine corridor Z)
+                        ConnectVent("VB_SpBR" + i, hvW, vY, sCZ[i], tX - hvW, vY, tCZ); ventSegs++;
+                        // Elbow: vent arrives from left (-X = from spine), exits downward
+                        AddVentElbow("VElbow_SpB" + bsp, tX, vY, tCZ, true, true, false, true);
+                        AddVentVertical("VDrop_SpB" + bsp, tX, dropY, tCZ, dropW, dropH, dropW);
+                        CutCeilingForVent(termGen[bsp], dropW, dropW); ventCutsMade++;
+                    }
+                    else
+                    {
+                        ConnectVent("VB_SpBR" + i, hvW, vY, sCZ[i], endX - hvW, vY, sCZ[i]); ventSegs++;
+                        AddVentCap("VentCap_SpB" + bsp, endX - hvW, vY, sCZ[i], true);
+                    }
                 }
             }
 

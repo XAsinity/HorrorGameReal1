@@ -77,6 +77,14 @@ public static class ShipLayoutScorer
     private const float W_NO_DIRECTION_MIX   = -30f;  // penalty when all lateral branches go same direction
     private const float W_ALL_STRAIGHT_BASE  = -10f;  // base all-straight penalty (scales with level)
 
+    // ── Aspect ratio / map spread ─────────────────────────────────────────────
+    // Reward maps that extend in both X and Z, producing a web-like footprint.
+    // A ratio of 1.0 (square) is ideal; very elongated maps (all Z, no X spread) are penalised.
+    private const float W_ASPECT_RATIO        = +15f;  // scales with aspect closeness to 1.0
+    private const float W_ASPECT_EXTREME      = -30f;  // penalty for very elongated maps
+    private const float ASPECT_EXTREME_LO     = 0.2f;  // width/depth ratio below this = extreme elongation
+    private const float ASPECT_EXTREME_HI     = 5.0f;  // width/depth ratio above this = extreme elongation
+
 
     /// <summary>Computes and returns a score for the most-recently generated layout.</summary>
     /// <param name="trainingLevel">Current training generation/level (0 = no level-scaled rules).</param>
@@ -203,6 +211,20 @@ public static class ShipLayoutScorer
         // Reward diverse Z and L shapes (capped at 2 each to prevent gaming)
         score += Mathf.Min(s.ZShapeCount, 2) * 3f;
         score += Mathf.Min(s.LShapeCount, 2) * 3f;
+
+        // ── Aspect ratio / spread reward ─────────────────────────────────────
+        // Reward maps that extend in both X and Z dimensions (web-like layout).
+        // Very elongated maps (narrow along X = all Z, no branches going sideways) are penalised.
+        if (s.MapWidth > 0.5f && s.MapDepth > 0.5f)
+        {
+            float ratio = s.MapWidth / s.MapDepth;  // > 1 = wider than deep, < 1 = narrower
+            float aspectCloseness = ratio <= 1f ? ratio : 1f / ratio;  // 0..1, higher = more square
+            float lvlMult = trainingLevel > 0 ? (1f + trainingLevel / 100f) : 1f;
+            score += aspectCloseness * W_ASPECT_RATIO * lvlMult;
+            // Extra penalty for extremely elongated maps
+            if (ratio < ASPECT_EXTREME_LO || ratio > ASPECT_EXTREME_HI)
+                score += W_ASPECT_EXTREME * lvlMult;
+        }
 
         // Left-right balance penalty — penalise lopsided room distribution
         int roomBalance = Mathf.Abs(gen.LastRoomsLeftCount - gen.LastRoomsRightCount);
