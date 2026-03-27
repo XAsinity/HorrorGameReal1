@@ -1202,12 +1202,12 @@ public class ShipLayoutGenerator : MonoBehaviour
         const float kBranchPad = 0.5f;
         float dW    = kDoorWidth;
         float dH    = kDoorHeight;
-        float vY    = Mathf.Max(roomHeight, corridorHeight);
+        // Rooms must always match corridor height so there is no visible gap at connections.
+        roomHeight = corridorHeight;
+        float vY    = corridorHeight;
         float hvW   = ventW / 2f;
         float dropW = ventW * 0.5f;
-        // Extend dropH to compensate when the vent trunk runs at corridorHeight
-        // but rooms have a lower roomHeight ceiling (only applies when corridorHeight > roomHeight).
-        float dropH = ventH + wallThickness + 0.15f + Mathf.Max(0f, vY - roomHeight);
+        float dropH = ventH + wallThickness + 0.15f;
         float dropY = vY - dropH / 2f;
 
         // World-space AABB registry: (centerX, centerZ, halfW, halfD)
@@ -2697,7 +2697,7 @@ public class ShipLayoutGenerator : MonoBehaviour
                     int    bsp    = spineLeftBranch[i];
                     float  endX   = -(HalfCor + bStrLen[bsp]);  // far end of the branch in -X
                     ConnectVent("VB_SpBL" + i, -hvW, vY, sCZ[i], endX + hvW, vY, sCZ[i]); ventSegs++;
-                    AddVentCap("VentCap_SpB" + bsp, endX, vY, sCZ[i], true);
+                    AddVentCap("VentCap_SpB" + bsp, endX + hvW, vY, sCZ[i], true);
                 }
 
                 if (sHR[i])
@@ -2714,7 +2714,7 @@ public class ShipLayoutGenerator : MonoBehaviour
                     int    bsp    = spineRightBranch[i];
                     float  endX   = HalfCor + bStrLen[bsp];  // far end of the branch in +X
                     ConnectVent("VB_SpBR" + i, hvW, vY, sCZ[i], endX - hvW, vY, sCZ[i]); ventSegs++;
-                    AddVentCap("VentCap_SpB" + bsp, endX, vY, sCZ[i], true);
+                    AddVentCap("VentCap_SpB" + bsp, endX - hvW, vY, sCZ[i], true);
                 }
             }
 
