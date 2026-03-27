@@ -205,6 +205,11 @@ public class ShipLayoutTrainer : MonoBehaviour
                 }
                 if (cancelled) break;
 
+                // Apply fitness sharing to prevent premature convergence.
+                // Individuals that produce similar genomes share fitness, encouraging
+                // the population to maintain diversity in the parameter space.
+                ApplyFitnessSharing(fitnesses, pop);
+
                 // Sort descending by fitness
                 System.Array.Sort(fitnesses, pop,
                     System.Collections.Generic.Comparer<float>.Create((a, b) => b.CompareTo(a)));
@@ -498,6 +503,48 @@ public class ShipLayoutTrainer : MonoBehaviour
     }
 
     // ── Utility ────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Fitness sharing (Goldberg and Richardson, 1987).
+    /// Divides each individual's raw fitness by a niche count based on genome similarity.
+    /// Individuals with very similar genomes share their fitness, reducing the reward
+    /// for converging to a single solution and preserving population diversity.
+    /// nicheRadius=0.35 chosen to group individuals within ~35% of the parameter space;
+    /// alpha=1.0 gives linear sharing within the niche (standard Goldberg formulation).
+    /// </summary>
+    private static void ApplyFitnessSharing(float[] fitnesses, float[][] pop)
+    {
+        const float nicheRadius = 0.35f;  // genome distance threshold for niche membership (~35% of space)
+        const float alpha       = 1.0f;   // linear sharing (standard Goldberg & Richardson formulation)
+        int n = fitnesses.Length;
+        float[] shared = new float[n];
+        for (int i = 0; i < n; i++)
+        {
+            float nicheCount = 0f;
+            for (int j = 0; j < n; j++)
+            {
+                float d = GenomeDistance(pop[i], pop[j]);
+                if (d < nicheRadius)
+                    nicheCount += 1f - Mathf.Pow(d / nicheRadius, alpha);
+            }
+            // Never divide by less than 1 (ensures raw fitness is never inflated)
+            shared[i] = fitnesses[i] / Mathf.Max(1f, nicheCount);
+        }
+        System.Array.Copy(shared, fitnesses, n);
+    }
+
+    /// <summary>Normalised Euclidean distance between two genomes in [0,1] space.</summary>
+    private static float GenomeDistance(float[] a, float[] b)
+    {
+        float sum = 0f;
+        int len = Mathf.Min(a.Length, b.Length);
+        for (int i = 0; i < len; i++)
+        {
+            float diff = a[i] - b[i];
+            sum += diff * diff;
+        }
+        return Mathf.Sqrt(sum / len);
+    }
 
     private static float Norm(float v, float lo, float hi) =>
         (hi > lo) ? Mathf.Clamp01((v - lo) / (hi - lo)) : 0f;
